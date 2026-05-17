@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IPTV Panel | Infinity</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="background-orbs">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+
+    <div class="dashboard">
+        <aside class="sidebar glass">
+            <div class="logo">
+                <h2>Infinity <span>IPTV</span></h2>
+            </div>
+            <nav>
+                <ul>
+                    <li class="active" onclick="switchTab('users')">Users</li>
+                    <li onclick="switchTab('channels')">Live TV</li>
+                    <li onclick="switchTab('movies')">Movies (VOD)</li>
+                    <li onclick="switchTab('import')">Import M3U</li>
+                </ul>
+            </nav>
+        </aside>
+
+        <main class="content glass">
+            <!-- USERS TAB -->
+            <section id="tab-users" class="tab-content active">
+                <header>
+                    <h1>Manage Users</h1>
+                    <button class="btn btn-primary" onclick="showModal('userModal')">+ Add User</button>
+                </header>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Username</th>
+                                <th>Max Connections</th>
+                                <th>Status</th>
+                                <th>M3U Link</th>
+                            </tr>
+                        </thead>
+                        <tbody id="users-tbody">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- CHANNELS TAB -->
+            <section id="tab-channels" class="tab-content">
+                <header>
+                    <div style="display:flex; align-items:center; gap: 16px;">
+                        <h1>Manage Channels</h1>
+                        <select id="country-filter" class="form-group input" style="margin-bottom:0; padding:8px 12px; background:rgba(0,0,0,0.2); border:1px solid var(--glass-border); border-radius:8px; color:white;" onchange="renderChannels()">
+                            <option value="ALL">All Countries</option>
+                        </select>
+                        <select id="category-filter" class="form-group input" style="margin-bottom:0; padding:8px 12px; background:rgba(0,0,0,0.2); border:1px solid var(--glass-border); border-radius:8px; color:white;" onchange="renderChannels()">
+                            <option value="ALL">All Categories</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="showModal('channelModal')">+ Add Channel</button>
+                </header>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Logo</th>
+                                <th>Name</th>
+                                <th>Category</th>
+                                <th>Country</th>
+                            </tr>
+                        </thead>
+                        <tbody id="channels-tbody">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- MOVIES TAB -->
+            <section id="tab-movies" class="tab-content">
+                <header>
+                    <div style="display:flex; align-items:center; gap: 16px;">
+                        <h1>Movies & Series</h1>
+                        <select id="movie-category-filter" class="form-group input" style="margin-bottom:0; padding:8px 12px; background:rgba(0,0,0,0.2); border:1px solid var(--glass-border); border-radius:8px; color:white;" onchange="renderMovies()">
+                            <option value="ALL">All Movies</option>
+                        </select>
+                    </div>
+                </header>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Poster</th>
+                                <th>Title</th>
+                                <th>Genre</th>
+                                <th>Country</th>
+                            </tr>
+                        </thead>
+                        <tbody id="movies-tbody">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- IMPORT TAB -->
+            <section id="tab-import" class="tab-content">
+                <header>
+                    <h1>Import M3U Playlist</h1>
+                </header>
+                <div class="form-container">
+                    <div class="form-group">
+                        <label>M3U URL</label>
+                        <input type="text" id="m3u_url" placeholder="http://example.com/list.m3u">
+                    </div>
+                    <button class="btn btn-primary" onclick="importM3U()">Import Channels</button>
+                    <p id="import-status" class="status-msg"></p>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- MODALS -->
+    <div id="userModal" class="modal">
+        <div class="modal-content glass">
+            <h2>Add User</h2>
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="new_username">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="new_password">
+            </div>
+            <div class="form-group">
+                <label>Max Connections</label>
+                <input type="number" id="new_max_conn" value="1">
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="closeModal('userModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="addUser()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="channelModal" class="modal">
+        <div class="modal-content glass">
+            <h2>Add Channel</h2>
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="new_ch_name">
+            </div>
+            <div class="form-group">
+                <label>Stream URL</label>
+                <input type="text" id="new_ch_url">
+            </div>
+            <div class="form-group">
+                <label>Logo URL (optional)</label>
+                <input type="text" id="new_ch_logo">
+            </div>
+            <div class="form-group">
+                <label>Category</label>
+                <input type="text" id="new_ch_cat" value="General">
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="closeModal('channelModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="addChannel()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
