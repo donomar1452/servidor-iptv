@@ -4,10 +4,7 @@ const mongoose = require('mongoose');
 // Por ahora usa una local o de memoria si quieres probar, pero para Render necesitarás tu URL.
 const mongoURI = process.env.MONGO_URI || "mongodb://localhost:27017/iptv";
 
-mongoose.connect(mongoURI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-}).then(() => {
+mongoose.connect(mongoURI).then(() => {
     console.log('Connected to the MongoDB database.');
     initDb();
 }).catch(err => {
