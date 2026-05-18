@@ -225,6 +225,45 @@ async function importM3U() {
     }
 }
 
+// Upload local M3U file
+async function uploadM3UFile() {
+    const fileInput = document.getElementById('m3u_file');
+    const file = fileInput.files[0];
+    const status = document.getElementById('import-status');
+    
+    if(!file) return alert("Por favor, selecciona un archivo M3U (.m3u o .m3u8) primero.");
+
+    status.innerText = "📤 Leyendo y subiendo archivo... Por favor espera.";
+    status.style.color = "var(--primary)";
+
+    try {
+        // Read the local file as plain text in the browser
+        const fileText = await file.text();
+
+        // Send the raw text to our new backend endpoint
+        const res = await fetch(`${API_URL}/m3u/import-text`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ m3u_text: fileText })
+        });
+        const data = await res.json();
+        
+        if (res.ok) {
+            status.innerText = `✅ ¡Archivo importado! ${data.message}`;
+            status.style.color = "#4ade80";
+            fileInput.value = ""; // Clear file selector
+            loadChannels(); // Refresh channel and movie counts
+        } else {
+            status.innerText = "❌ Error: " + (data.error || "No se pudo procesar el archivo.");
+            status.style.color = "#ef4444";
+        }
+    } catch (e) {
+        console.error(e);
+        status.innerText = "❌ Error de conexión al procesar el archivo.";
+        status.style.color = "#ef4444";
+    }
+}
+
 // Copy Playlist Link with custom password input
 function copyPlaylistLink(username) {
     const password = prompt(`Introduce la contraseña de "${username}" para generar el enlace completo (o déjala en blanco para rellenarla manualmente más tarde):`);
@@ -485,6 +524,14 @@ function loadAndScrapePlaylist(index) {
 
     // Load M3U URL input
     document.getElementById('explorer-m3u-url').value = item.url;
+    
+    // Automatically pre-fill the filter search input with the Deep Search query to hide other countries
+    const query = document.getElementById('explorer-deep-query').value.trim();
+    if (query) {
+        document.getElementById('explorer-search').value = query;
+    } else {
+        document.getElementById('explorer-search').value = "";
+    }
     
     // Switch to Curated/Custom List Mode tab
     toggleExplorerMode('curated');
