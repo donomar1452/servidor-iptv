@@ -144,6 +144,17 @@ header h1 { font-size: 2rem; font-weight: 800; }
     box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
 }
 
+.btn-danger {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.5);
+    color: #f87171;
+}
+.btn-danger:hover {
+    background: rgba(239, 68, 68, 0.4);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+}
+
 /* Tables */
 .table-container {
     background: rgba(0, 0, 0, 0.2);

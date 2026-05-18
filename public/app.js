@@ -239,5 +239,29 @@ function copyToClipboard(text) {
     }
 }
 
+// Clear all channels
+async function clearAllChannels() {
+    if (!confirm("¿Estás seguro de que quieres eliminar todos los canales? Esta acción no se puede deshacer y la base de datos quedará en 0.")) {
+        return;
+    }
+    
+    try {
+        const res = await fetch(`${API_URL}/channels`, {
+            method: 'DELETE'
+        });
+        const data = await res.json();
+        if (res.ok) {
+            alert(data.message || "Canales eliminados correctamente.");
+            // Reload channels to update UI count/view
+            loadChannels();
+        } else {
+            alert("Error al eliminar los canales: " + (data.error || "Desconocido"));
+        }
+    } catch (e) {
+        console.error(e);
+        alert("No se pudo conectar con el servidor.");
+    }
+}
+
 // Init
 window.onload = loadUsers;
