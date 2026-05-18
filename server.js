@@ -402,6 +402,72 @@ app.post('/api/m3u/import', async (req, res) => {
     }
 });
 
+// Parse M3U text endpoint (for local file upload)
+app.post('/api/m3u/import-text', async (req, res) => {
+    const { m3u_text } = req.body;
+    if (!m3u_text) return res.status(400).json({error: "M3U text is required"});
+    
+    try {
+        console.log("Clearing previous channels from database...");
+        await Channel.deleteMany({});
+        
+        console.log(`Parsing uploaded M3U text...`);
+        const lines = m3u_text.split(/\r?\n/);
+        let currentChannel = {};
+        let addedCount = 0;
+        let channelsToInsert = [];
+        
+        for (let line of lines) {
+            line = line.trim();
+            if (line.startsWith('#EXTINF:')) {
+                const logoMatch = line.match(/tvg-logo="([^"]+)"/);
+                const groupMatch = line.match(/group-title="([^"]+)"/);
+                const countryMatch = line.match(/tvg-country="([^"]+)"/);
+                const nameMatch = line.split(',').pop();
+                
+                let cat = groupMatch ? groupMatch[1] : 'General';
+                let ctry = countryMatch ? countryMatch[1].toUpperCase() : 'UNK';
+                
+                currentChannel = {
+                    name: nameMatch ? nameMatch.trim() : 'Unknown',
+                    logo: logoMatch ? logoMatch[1] : '',
+                    category: ctry !== 'UNK' ? `${ctry} - ${cat}` : cat,
+                    country: ctry
+                };
+            } else if (line.startsWith('http')) {
+                currentChannel.stream_url = line;
+                
+                channelsToInsert.push({
+                    name: currentChannel.name || 'Unknown',
+                    stream_url: currentChannel.stream_url,
+                    logo: currentChannel.logo || '',
+                    category: currentChannel.category || 'General',
+                    country: currentChannel.country || 'Unknown'
+                });
+                
+                currentChannel = {}; 
+            }
+            
+            if (channelsToInsert.length >= 5000) {
+                await Channel.insertMany(channelsToInsert, { ordered: false }).catch(e => console.error(e));
+                addedCount += channelsToInsert.length;
+                channelsToInsert = [];
+            }
+        }
+        
+        if (channelsToInsert.length > 0) {
+            await Channel.insertMany(channelsToInsert, { ordered: false }).catch(e => console.error(e));
+            addedCount += channelsToInsert.length;
+        }
+        
+        console.log(`M3U Text Upload Imported Successfully. Added ${addedCount} channels.`);
+        res.json({ message: `M3U Text Upload Imported Successfully. Added ${addedCount} channels.` });
+    } catch (err) {
+        console.error("M3U Text Import Error:", err.message);
+        res.status(500).json({ error: 'Failed to parse M3U text', details: err.message });
+    }
+});
+
 // --- IPTV PROXY ROUTE ---
 app.get('/live/:username/:password/:channel_id.:ext', async (req, res) => {
     const { username, password, channel_id } = req.params;
@@ -611,56 +677,59 @@ async function runAutopilotTask() {
             
             let discoveredUrls = new Map();
 
-            for (const keyword of settings.keywords) {
-                // Rate-limit free DuckDuckGo Pastebin & Gist Raw crawler
-                try {
-                    const searchUrl = `https://html.duckduckgo.com/html/?q=site:pastebin.com+OR+site:gist.github.com+OR+site:github.com+iptv+m3u+${encodeURIComponent(keyword)}`;
-                    const response = await axios.get(searchUrl, {
-                        headers: {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                        },
-                        timeout: 8000
-                    });
+            // 1. Single combined DuckDuckGo query (rate-limit immune)
+            try {
+                const combined = settings.keywords.map(k => encodeURIComponent(k.trim())).join('+OR+');
+                const searchUrl = `https://html.duckduckgo.com/html/?q=site:pastebin.com+OR+site:gist.github.com+OR+site:github.com+iptv+m3u+(${combined})`;
+                
+                const response = await axios.get(searchUrl, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    },
+                    timeout: 8000
+                });
 
-                    const html = response.data;
-                    const regex = /uddg=([^"&'\s>]+)/gi;
-                    let match;
+                const html = response.data;
+                const regex = /uddg=([^"&'\s>]+)/gi;
+                let match;
 
-                    while ((match = regex.exec(html)) !== null) {
-                        try {
-                            let rawUrl = decodeURIComponent(match[1]);
-                            if (rawUrl.includes('//duckduckgo.com') || !rawUrl.startsWith('http')) continue;
+                while ((match = regex.exec(html)) !== null) {
+                    try {
+                        let rawUrl = decodeURIComponent(match[1]);
+                        if (rawUrl.includes('//duckduckgo.com') || !rawUrl.startsWith('http')) continue;
 
-                            let isTarget = false;
-                            if (rawUrl.includes('pastebin.com')) {
-                                isTarget = true;
-                                if (!rawUrl.includes('/raw/')) {
-                                    rawUrl = rawUrl.replace(/pastebin\.com\/([a-zA-Z0-9]+)$/, 'pastebin.com/raw/$1');
-                                }
-                            } else if (rawUrl.includes('gist.github.com')) {
-                                isTarget = true;
-                                if (!rawUrl.includes('/raw')) {
-                                    rawUrl = rawUrl + '/raw';
-                                }
-                            } else if (rawUrl.includes('github.com')) {
-                                isTarget = true;
-                                if (rawUrl.includes('/blob/')) {
-                                    rawUrl = rawUrl.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
-                                }
+                        let isTarget = false;
+                        if (rawUrl.includes('pastebin.com')) {
+                            isTarget = true;
+                            if (!rawUrl.includes('/raw/')) {
+                                rawUrl = rawUrl.replace(/pastebin\.com\/([a-zA-Z0-9]+)$/, 'pastebin.com/raw/$1');
                             }
-
-                            if (isTarget) {
-                                discoveredUrls.set(rawUrl, keyword);
+                        } else if (rawUrl.includes('gist.github.com')) {
+                            isTarget = true;
+                            if (!rawUrl.includes('/raw')) {
+                                rawUrl = rawUrl + '/raw';
                             }
-                        } catch (e) {}
-                    }
-                } catch (err) {
-                    console.error(`Error crawling DDG for keyword ${keyword}:`, err.message);
+                        } else if (rawUrl.includes('github.com')) {
+                            isTarget = true;
+                            if (rawUrl.includes('/blob/')) {
+                                rawUrl = rawUrl.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
+                            }
+                        }
+
+                        if (isTarget) {
+                            discoveredUrls.set(rawUrl, 'Web Search');
+                        }
+                    } catch (e) {}
                 }
+            } catch (err) {
+                console.error(`Error crawling DDG for combined keywords:`, err.message);
+            }
 
-                // Fallback to GitHub API (if not rate limited)
+            // 2. Select up to 2 random keywords to query GitHub API (to avoid rate limits)
+            const githubKeywords = settings.keywords.sort(() => 0.5 - Math.random()).slice(0, 2);
+            for (const keyword of githubKeywords) {
                 try {
-                    const searchUrl = `https://api.github.com/search/repositories?q=iptv+m3u+${encodeURIComponent(keyword)}&sort=stars&order=desc`;
+                    const searchUrl = `https://api.github.com/search/repositories?q=iptv+m3u+${encodeURIComponent(keyword.trim())}&sort=stars&order=desc`;
                     const response = await axios.get(searchUrl, {
                         headers: { 
                             'User-Agent': 'IPTV-Autopilot-Scraper (Mozilla/5.0)',
@@ -670,7 +739,7 @@ async function runAutopilotTask() {
                     });
                     
                     const repos = response.data.items || [];
-                    for (const repo of repos.slice(0, 2)) {
+                    for (const repo of repos.slice(0, 1)) {
                         try {
                             const contentsUrl = `https://api.github.com/repos/${repo.full_name}/contents`;
                             const contentsRes = await axios.get(contentsUrl, {
