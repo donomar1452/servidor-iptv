@@ -561,13 +561,25 @@ async function runAutopilotTask() {
             await Promise.all(batch.map(async (ch) => {
                 let isAlive = false;
                 try {
-                    const res = await axios.get(ch.stream_url, {
+                    // Try HEAD first (fast, no body download)
+                    const resHead = await axios.head(ch.stream_url, {
                         headers: { 'User-Agent': 'Mozilla/5.0' },
-                        timeout: 3500
+                        timeout: 2500
                     });
-                    if (res.status < 400) isAlive = true;
+                    if (resHead.status < 400) isAlive = true;
                 } catch (e) {
-                    isAlive = false;
+                    // Fallback to GET with strict size limit to prevent downloading infinite live streams
+                    try {
+                        const resGet = await axios.get(ch.stream_url, {
+                            headers: { 'User-Agent': 'Mozilla/5.0' },
+                            timeout: 2500,
+                            maxContentLength: 20000,
+                            maxBodyLength: 20000
+                        });
+                        if (resGet.status < 400) isAlive = true;
+                    } catch (errInner) {
+                        isAlive = false;
+                    }
                 }
 
                 if (isAlive) {
@@ -600,6 +612,53 @@ async function runAutopilotTask() {
             let discoveredUrls = new Map();
 
             for (const keyword of settings.keywords) {
+                // Rate-limit free DuckDuckGo Pastebin & Gist Raw crawler
+                try {
+                    const searchUrl = `https://html.duckduckgo.com/html/?q=site:pastebin.com+OR+site:gist.github.com+OR+site:github.com+iptv+m3u+${encodeURIComponent(keyword)}`;
+                    const response = await axios.get(searchUrl, {
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        },
+                        timeout: 8000
+                    });
+
+                    const html = response.data;
+                    const regex = /uddg=([^"&'\s>]+)/gi;
+                    let match;
+
+                    while ((match = regex.exec(html)) !== null) {
+                        try {
+                            let rawUrl = decodeURIComponent(match[1]);
+                            if (rawUrl.includes('//duckduckgo.com') || !rawUrl.startsWith('http')) continue;
+
+                            let isTarget = false;
+                            if (rawUrl.includes('pastebin.com')) {
+                                isTarget = true;
+                                if (!rawUrl.includes('/raw/')) {
+                                    rawUrl = rawUrl.replace(/pastebin\.com\/([a-zA-Z0-9]+)$/, 'pastebin.com/raw/$1');
+                                }
+                            } else if (rawUrl.includes('gist.github.com')) {
+                                isTarget = true;
+                                if (!rawUrl.includes('/raw')) {
+                                    rawUrl = rawUrl + '/raw';
+                                }
+                            } else if (rawUrl.includes('github.com')) {
+                                isTarget = true;
+                                if (rawUrl.includes('/blob/')) {
+                                    rawUrl = rawUrl.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
+                                }
+                            }
+
+                            if (isTarget) {
+                                discoveredUrls.set(rawUrl, keyword);
+                            }
+                        } catch (e) {}
+                    }
+                } catch (err) {
+                    console.error(`Error crawling DDG for keyword ${keyword}:`, err.message);
+                }
+
+                // Fallback to GitHub API (if not rate limited)
                 try {
                     const searchUrl = `https://api.github.com/search/repositories?q=iptv+m3u+${encodeURIComponent(keyword)}&sort=stars&order=desc`;
                     const response = await axios.get(searchUrl, {
@@ -627,7 +686,7 @@ async function runAutopilotTask() {
                                 files.forEach(file => {
                                     const nameLower = file.name.toLowerCase();
                                     if (file.type === 'file' && (nameLower.endsWith('.m3u') || nameLower.endsWith('.m3u8'))) {
-                                        discoveredUrls.set(file.download_url, `${repo.full_name} / ${file.name}`);
+                                        discoveredUrls.set(file.download_url, keyword);
                                     }
                                 });
                             }
@@ -636,10 +695,10 @@ async function runAutopilotTask() {
                 } catch (e) {}
             }
 
-            await addAutopilotLog(settings, `🔗 Discovered ${discoveredUrls.size} M3U playlists from GitHub. Syncing channels...`);
+            await addAutopilotLog(settings, `🔗 Discovered ${discoveredUrls.size} M3U playlists from web sources. Syncing channels...`);
 
             let crawledChannelsCount = 0;
-            const plistUrls = Array.from(discoveredUrls.keys()).slice(0, 2);
+            const plistUrls = Array.from(discoveredUrls.keys()).slice(0, 3); // Read up to 3 playlists
             
             for (const plistUrl of plistUrls) {
                 try {
@@ -664,21 +723,31 @@ async function runAutopilotTask() {
                             const url = line;
                             const exists = await Channel.findOne({ stream_url: url });
                             if (!exists) {
-                                channelsToInsert.push({
-                                    name: currentChannel.name || 'Unknown',
-                                    stream_url: url,
-                                    logo: currentChannel.logo || '',
-                                    category: `Scraped - ${currentChannel.category || 'General'}`,
-                                    country: 'UNK',
-                                    active: true
-                                });
+                                const movieRegex = /movie|cine|pelicula|vod|serie|film|drama|comedia|acción/i;
+                                let isMovie = movieRegex.test(currentChannel.name) || movieRegex.test(currentChannel.category) || url.endsWith('.mp4') || url.endsWith('.mkv');
+                                
+                                if (isMovie) {
+                                    let finalCategory = `Scraped - ${currentChannel.category || 'General'}`;
+                                    if (!finalCategory.toLowerCase().includes('pelicula')) {
+                                        finalCategory = `Pelicula - ${currentChannel.category || 'Scraped'}`;
+                                    }
+
+                                    channelsToInsert.push({
+                                        name: currentChannel.name || 'Unknown',
+                                        stream_url: url,
+                                        logo: currentChannel.logo || '',
+                                        category: finalCategory,
+                                        country: 'UNK',
+                                        active: true
+                                    });
+                                }
                             }
                             currentChannel = {};
                         }
                     }
 
                     if (channelsToInsert.length > 0) {
-                        const insertLimit = channelsToInsert.slice(0, 30); // Insert up to 30 channels to avoid database pollution
+                        const insertLimit = channelsToInsert.slice(0, 50); // Insert up to 50 channels per list to avoid database pollution
                         await Channel.insertMany(insertLimit, { ordered: false }).catch(e => {});
                         crawledChannelsCount += insertLimit.length;
                     }
