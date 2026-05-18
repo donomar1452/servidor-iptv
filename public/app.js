@@ -401,5 +401,99 @@ async function addScrapedChannel(index) {
     }
 }
 
+// --- DUAL-MODE CONTROLLER FOR EXPLORER ---
+function toggleExplorerMode(mode) {
+    const btnCurated = document.getElementById('btn-mode-curated');
+    const btnDeep = document.getElementById('btn-mode-deep');
+    const panelCurated = document.getElementById('panel-explorer-curated');
+    const panelDeep = document.getElementById('panel-explorer-deep');
+
+    if (mode === 'curated') {
+        btnCurated.className = "btn btn-primary";
+        btnDeep.className = "btn";
+        btnDeep.style.background = "rgba(255,255,255,0.05)";
+        btnDeep.style.border = "1px solid var(--glass-border)";
+        
+        panelCurated.style.display = "block";
+        panelDeep.style.display = "none";
+    } else {
+        btnDeep.className = "btn btn-primary";
+        btnCurated.className = "btn";
+        btnCurated.style.background = "rgba(255,255,255,0.05)";
+        btnCurated.style.border = "1px solid var(--glass-border)";
+        
+        panelDeep.style.display = "block";
+        panelCurated.style.display = "none";
+    }
+}
+
+let discoveredPlaylists = [];
+
+async function searchDeepPlaylists() {
+    const query = document.getElementById('explorer-deep-query').value.trim();
+    const tbody = document.getElementById('explorer-deep-tbody');
+    if (!query) return alert("Por favor, introduce términos de búsqueda (ej: 'deportes' o 'latino')");
+
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--primary); padding: 32px;">🚀 Rastreando la web profundamente (GitHub, Pastebin, Gists) en busca de listas de "${query}"... Esto puede tardar unos segundos.</td></tr>`;
+
+    try {
+        const res = await fetch(`${API_URL}/scraper/deep-search?query=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        
+        if (res.ok) {
+            discoveredPlaylists = data;
+            renderDiscoveredPlaylists();
+        } else {
+            tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #ef4444; padding: 32px;">❌ Error de búsqueda: ${data.error || "No se pudo realizar el rastreo."}</td></tr>`;
+        }
+    } catch (e) {
+        console.error(e);
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #ef4444; padding: 32px;">❌ Error de red al conectar con el motor de rastreo.</td></tr>`;
+    }
+}
+
+function renderDiscoveredPlaylists() {
+    const tbody = document.getElementById('explorer-deep-tbody');
+    if (discoveredPlaylists.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 32px;">No se descubrieron listas públicas para tu búsqueda. Intenta con otras palabras clave.</td></tr>`;
+        return;
+    }
+
+    let htmlStr = '';
+    discoveredPlaylists.forEach((item, index) => {
+        const urlShort = item.url.length > 60 ? item.url.substring(0, 60) + "..." : item.url;
+        const sourceBadgeColor = item.source === 'Pastebin' ? '#ef4444' : item.source === 'GitHub' ? '#8b5cf6' : '#3b82f6';
+        
+        htmlStr += `
+            <tr>
+                <td><strong>${item.name}</strong></td>
+                <td><span class="status-badge" style="background: rgba(255,255,255,0.05); color: ${sourceBadgeColor}; border: 1px solid ${sourceBadgeColor}; font-size: 0.75rem; font-weight: bold; text-transform: uppercase;">${item.source}</span></td>
+                <td><span class="link-box" style="font-family: monospace; font-size: 0.75rem;" onclick="copyToClipboard('${item.url}')" title="${item.url}">${urlShort}</span></td>
+                <td>
+                    <button class="btn btn-primary" style="padding: 6px 12px; font-size: 0.85rem;" onclick="loadAndScrapePlaylist(${index})">⚡ Load & Scrape</button>
+                </td>
+            </tr>
+        `;
+    });
+    tbody.innerHTML = htmlStr;
+}
+
+function loadAndScrapePlaylist(index) {
+    const item = discoveredPlaylists[index];
+    if (!item) return;
+
+    // Load M3U URL input
+    document.getElementById('explorer-m3u-url').value = item.url;
+    
+    // Switch to Curated/Custom List Mode tab
+    toggleExplorerMode('curated');
+    
+    // Clear selection preset to avoid confusion
+    document.getElementById('explorer-preset').value = "";
+    
+    // Execute scrape
+    scrapePublicList();
+}
+
 // Init
 window.onload = loadUsers;
