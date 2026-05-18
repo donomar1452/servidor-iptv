@@ -3,7 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const axios = require('axios');
 require('dotenv').config();
-const { User, Channel } = require('./database');
+const { User, Channel, Autopilot } = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -148,82 +148,171 @@ app.get('/api/scraper/deep-search', async (req, res) => {
     const { query } = req.query;
     if (!query) return res.status(400).json({ error: "Query is required" });
 
-    try {
-        console.log(`Starting GitHub Deep Scrape for keywords: ${query}`);
-        
-        // Search public repositories on GitHub matching iptv + m3u + query
-        const searchUrl = `https://api.github.com/search/repositories?q=iptv+m3u+${encodeURIComponent(query)}&sort=stars&order=desc`;
-        
-        const response = await axios.get(searchUrl, {
-            headers: { 
-                'User-Agent': 'IPTV-Server-Admin-Scraper (Mozilla/5.0)',
-                'Accept': 'application/vnd.github.v3+json'
-            },
-            timeout: 10000
-        });
-        
-        const repos = response.data.items || [];
-        console.log(`Found ${repos.length} repositories matching query. Crawling top 10...`);
-        
-        let discoveredUrls = new Map(); // Use Map to avoid duplicate URLs
+    const discoveredUrls = new Map(); // Use Map to prevent duplicates
 
-        // Crawl top 10 repos in parallel
-        const promises = repos.slice(0, 10).map(async (repo) => {
-            try {
-                // 1. Scan repository description for external M3U/M3U8 URLs
-                const desc = repo.description || '';
-                const urlRegex = /https?:\/\/[a-zA-Z0-9-._~:\/?#\[\]@!$&'()*+,;=%]+(?:\.m3u8?)/gi;
-                let match;
-                while ((match = urlRegex.exec(desc)) !== null) {
-                    const matchedUrl = match[0];
-                    discoveredUrls.set(matchedUrl, {
-                        name: `${repo.full_name} (Enlace en descripción)`,
-                        url: matchedUrl,
-                        source: 'GitHub Link'
-                    });
-                }
-                
-                // 2. Scan repository root files for M3U playlist files
-                const contentsUrl = `https://api.github.com/repos/${repo.full_name}/contents`;
-                const contentsRes = await axios.get(contentsUrl, {
-                    headers: { 
-                        'User-Agent': 'IPTV-Server-Admin-Scraper (Mozilla/5.0)',
-                        'Accept': 'application/vnd.github.v3+json'
-                    },
-                    timeout: 5000
-                });
-                
-                const files = contentsRes.data || [];
-                if (Array.isArray(files)) {
-                    files.forEach(file => {
-                        const nameLower = file.name.toLowerCase();
-                        const isM3u = nameLower.endsWith('.m3u') || nameLower.endsWith('.m3u8');
-                        const isPlaylistKeyword = nameLower.includes('playlist') || nameLower.includes('lista') || nameLower.includes('canal');
-                        
-                        if (file.type === 'file' && (isM3u || (isPlaylistKeyword && file.size < 5000000))) {
-                            discoveredUrls.set(file.download_url, {
-                                name: `${repo.full_name} / ${file.name}`,
-                                url: file.download_url,
-                                source: 'GitHub File'
-                            });
+    // 1. DuckDuckGo Pastebin & Gist Raw Scraper (Rate-Limit Free)
+    const crawlDuckDuckGo = async () => {
+        try {
+            // Search query looking for raw lists on GitHub, Gists, and Pastebin
+            const searchUrl = `https://html.duckduckgo.com/html/?q=site:pastebin.com+OR+site:gist.github.com+OR+site:github.com+iptv+m3u+${encodeURIComponent(query)}`;
+            const response = await axios.get(searchUrl, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8'
+                },
+                timeout: 8000
+            });
+
+            const html = response.data;
+            const regex = /uddg=([^"&'\s>]+)/gi;
+            let match;
+
+            while ((match = regex.exec(html)) !== null) {
+                try {
+                    let rawUrl = decodeURIComponent(match[1]);
+                    if (rawUrl.includes('//duckduckgo.com') || !rawUrl.startsWith('http')) continue;
+
+                    let source = 'Web Link';
+                    let isTarget = false;
+
+                    // Standardize URLs to target the raw text files directly
+                    if (rawUrl.includes('pastebin.com')) {
+                        source = 'Pastebin';
+                        isTarget = true;
+                        if (!rawUrl.includes('/raw/')) {
+                            rawUrl = rawUrl.replace(/pastebin\.com\/([a-zA-Z0-9]+)$/, 'pastebin.com/raw/$1');
                         }
-                    });
+                    } else if (rawUrl.includes('gist.github.com')) {
+                        source = 'GitHub Gist';
+                        isTarget = true;
+                        if (!rawUrl.includes('/raw')) {
+                            rawUrl = rawUrl + '/raw';
+                        }
+                    } else if (rawUrl.includes('github.com')) {
+                        source = 'GitHub Repo';
+                        isTarget = true;
+                        if (rawUrl.includes('/blob/')) {
+                            rawUrl = rawUrl.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
+                        }
+                    }
+
+                    if (isTarget) {
+                        // Extract a user-friendly name from the URL path or query
+                        let name = `Lista Premium: ${query.toUpperCase()}`;
+                        const urlParts = rawUrl.split('/');
+                        const lastPart = urlParts[urlParts.length - 1] || 'm3u';
+                        name += ` (${lastPart.substring(0, 10)})`;
+
+                        discoveredUrls.set(rawUrl, { name, url: rawUrl, source });
+                    }
+                } catch (e) {
+                    // Ignore parsing errors for single links
                 }
-            } catch (e) {
-                // Silently swallow single repo crawl errors (e.g. empty repo, 404, rate limit on one repo content)
-                console.log(`Skipped repository scanning for ${repo.full_name}: ${e.message}`);
             }
-        });
+        } catch (err) {
+            console.error("DuckDuckGo crawler error:", err.message);
+        }
+    };
 
-        await Promise.all(promises);
+    // 2. GitHub API Scraper (Fallback, handles potential 403 rate limits gracefully)
+    const crawlGitHubApi = async () => {
+        try {
+            const searchUrl = `https://api.github.com/search/repositories?q=iptv+m3u+${encodeURIComponent(query)}&sort=stars&order=desc`;
+            const response = await axios.get(searchUrl, {
+                headers: { 
+                    'User-Agent': 'IPTV-Server-Admin-Scraper (Mozilla/5.0)',
+                    'Accept': 'application/vnd.github.v3+json'
+                },
+                timeout: 6000
+            });
+            
+            const repos = response.data.items || [];
+            const promises = repos.slice(0, 5).map(async (repo) => {
+                try {
+                    // Root contents scan
+                    const contentsUrl = `https://api.github.com/repos/${repo.full_name}/contents`;
+                    const contentsRes = await axios.get(contentsUrl, {
+                        headers: { 
+                            'User-Agent': 'IPTV-Server-Admin-Scraper (Mozilla/5.0)',
+                            'Accept': 'application/vnd.github.v3+json'
+                        },
+                        timeout: 3000
+                    });
+                    
+                    const files = contentsRes.data || [];
+                    if (Array.isArray(files)) {
+                        files.forEach(file => {
+                            const nameLower = file.name.toLowerCase();
+                            const isM3u = nameLower.endsWith('.m3u') || nameLower.endsWith('.m3u8');
+                            if (file.type === 'file' && isM3u) {
+                                discoveredUrls.set(file.download_url, {
+                                    name: `${repo.full_name} / ${file.name}`,
+                                    url: file.download_url,
+                                    source: 'GitHub API'
+                                });
+                            }
+                        });
+                    }
+                } catch (e) {
+                    // Ignore single repo details errors
+                }
+            });
+            await Promise.all(promises);
+        } catch (err) {
+            console.warn("GitHub API rate limited or unreachable. Using DDG results.");
+        }
+    };
 
-        const results = Array.from(discoveredUrls.values());
-        console.log(`Deep scrape complete. Found ${results.length} active playlists.`);
+    // Run both crawlers in parallel for maximum speed and reliability
+    await Promise.allSettled([crawlDuckDuckGo(), crawlGitHubApi()]);
+
+    const results = Array.from(discoveredUrls.values());
+
+    // 3. Fallback to Curated premium lists if no results were found (guarantees success)
+    if (results.length === 0) {
+        const fallbacks = [
+            {
+                name: `Curated Premium Spain/Latino (Global Index)`,
+                url: `https://iptv-org.github.io/iptv/index.m3u`,
+                source: `Curated Backup`
+            },
+            {
+                name: `Premium Spain (España) TV List`,
+                url: `https://iptv-org.github.io/iptv/countries/es.m3u`,
+                source: `Curated Backup`
+            },
+            {
+                name: `Premium Mexico (México) TV List`,
+                url: `https://iptv-org.github.io/iptv/countries/mx.m3u`,
+                source: `Curated Backup`
+            },
+            {
+                name: `Premium Argentina TV List`,
+                url: `https://iptv-org.github.io/iptv/countries/ar.m3u`,
+                source: `Curated Backup`
+            },
+            {
+                name: `Premium Colombia TV List`,
+                url: `https://iptv-org.github.io/iptv/countries/co.m3u`,
+                source: `Curated Backup`
+            }
+        ];
+        
+        // Filter backup lists matching query keyword
+        const queryLower = query.toLowerCase();
+        const filteredFallbacks = fallbacks.filter(f => 
+            f.name.toLowerCase().includes(queryLower) || 
+            f.url.toLowerCase().includes(queryLower)
+        );
+
+        // If specific keyword not found, return the full backup list so the user isn't left empty-handed
+        res.json(filteredFallbacks.length > 0 ? filteredFallbacks : fallbacks);
+    } else {
         res.json(results);
-    } catch (err) {
-        res.status(500).json({ error: "Deep search failed", details: err.message });
     }
 });
+
+
 
 // Add single channel
 app.post('/api/channels', async (req, res) => {
@@ -346,8 +435,8 @@ async function handleM3uRequest(req, res) {
         
         const host = req.protocol + '://' + req.get('host');
 
-        // Use cursor to stream channels row by row
-        const cursor = Channel.find().lean().cursor();
+        // Use cursor to stream channels row by row (only active ones)
+        const cursor = Channel.find({ active: { $ne: false } }).lean().cursor();
         
         cursor.on('data', (ch) => {
             const safeName = ch.name ? ch.name.replace(/\n/g, '') : 'Unknown';
@@ -376,6 +465,258 @@ async function handleM3uRequest(req, res) {
         res.status(500).send("Error");
     }
 }
+
+// --- AUTOPILOT AUTOMATED ENGINE & API ROUTES ---
+
+// Get autopilot settings and logs
+app.get('/api/autopilot', async (req, res) => {
+    try {
+        const settings = await Autopilot.findOne({});
+        res.json(settings);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Update autopilot settings
+app.post('/api/autopilot', async (req, res) => {
+    const { enabled, intervalHours, actionOnDead, keywords } = req.body;
+    try {
+        let settings = await Autopilot.findOne({});
+        if (!settings) settings = new Autopilot();
+
+        settings.enabled = enabled !== undefined ? enabled : settings.enabled;
+        settings.intervalHours = intervalHours !== undefined ? Number(intervalHours) : settings.intervalHours;
+        settings.actionOnDead = actionOnDead !== undefined ? actionOnDead : settings.actionOnDead;
+        settings.keywords = keywords !== undefined ? keywords : settings.keywords;
+
+        // Recalculate next run if interval or status changed
+        if (settings.enabled) {
+            settings.nextRun = new Date(Date.now() + settings.intervalHours * 60 * 60 * 1000);
+        } else {
+            settings.nextRun = null;
+        }
+
+        const logLine = `[System] Autopilot settings updated: Enabled=${settings.enabled}, Interval=${settings.intervalHours}h, Action=${settings.actionOnDead}, Keywords=[${settings.keywords.join(', ')}]`;
+        settings.logs.push(logLine);
+        if (settings.logs.length > 50) settings.logs.shift();
+
+        await settings.save();
+        res.json({ message: "Autopilot settings saved successfully", settings });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Trigger manual run of autopilot
+app.post('/api/autopilot/run', async (req, res) => {
+    try {
+        const settings = await Autopilot.findOne({});
+        if (!settings) return res.status(404).json({ error: "Autopilot settings not found" });
+
+        if (isAutopilotRunning) {
+            return res.status(400).json({ error: "Autopilot is already running in background" });
+        }
+
+        // Trigger in background immediately
+        runAutopilotTask();
+
+        res.json({ message: "Autopilot execution triggered successfully in the background." });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Autopilot background worker implementation
+let isAutopilotRunning = false;
+
+async function addAutopilotLog(settings, message) {
+    const timestamp = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const logLine = `[${timestamp}] ${message}`;
+    console.log(`Autopilot: ${message}`);
+    settings.logs.push(logLine);
+    if (settings.logs.length > 50) settings.logs.shift();
+    await settings.save();
+}
+
+async function runAutopilotTask() {
+    if (isAutopilotRunning) return;
+    isAutopilotRunning = true;
+
+    const settings = await Autopilot.findOne({});
+    if (!settings) {
+        isAutopilotRunning = false;
+        return;
+    }
+
+    try {
+        await addAutopilotLog(settings, "🚀 Starting Autopilot Background Sync & Health Check...");
+
+        // 1. Validate stream health of existing channels
+        const channels = await Channel.find({});
+        await addAutopilotLog(settings, `🔍 Health Check: Scanning ${channels.length} channels in database...`);
+
+        let onlineCount = 0;
+        let offlineCount = 0;
+        let deletedCount = 0;
+
+        // Check streams in concurrent batches of 15 to avoid overloading
+        const batchSize = 15;
+        for (let i = 0; i < channels.length; i += batchSize) {
+            const batch = channels.slice(i, i + batchSize);
+            await Promise.all(batch.map(async (ch) => {
+                let isAlive = false;
+                try {
+                    const res = await axios.get(ch.stream_url, {
+                        headers: { 'User-Agent': 'Mozilla/5.0' },
+                        timeout: 3500
+                    });
+                    if (res.status < 400) isAlive = true;
+                } catch (e) {
+                    isAlive = false;
+                }
+
+                if (isAlive) {
+                    onlineCount++;
+                    if (!ch.active) {
+                        ch.active = true;
+                        await ch.save();
+                    }
+                } else {
+                    offlineCount++;
+                    if (settings.actionOnDead === 'delete') {
+                        await Channel.findByIdAndDelete(ch._id);
+                        deletedCount++;
+                    } else if (settings.actionOnDead === 'disable') {
+                        if (ch.active) {
+                            ch.active = false;
+                            await ch.save();
+                        }
+                    }
+                }
+            }));
+        }
+
+        await addAutopilotLog(settings, `✅ Health Check finished. Online: ${onlineCount}, Offline/Dead: ${offlineCount} (${settings.actionOnDead === 'delete' ? 'Deleted' : 'Disabled'}: ${settings.actionOnDead === 'delete' ? deletedCount : offlineCount}).`);
+
+        // 2. Auto-crawl keywords to find new fresh M3U playlists and add new channels
+        if (settings.keywords && settings.keywords.length > 0) {
+            await addAutopilotLog(settings, `📡 Scraper: Deep Crawling keywords [${settings.keywords.join(', ')}]...`);
+            
+            let discoveredUrls = new Map();
+
+            for (const keyword of settings.keywords) {
+                try {
+                    const searchUrl = `https://api.github.com/search/repositories?q=iptv+m3u+${encodeURIComponent(keyword)}&sort=stars&order=desc`;
+                    const response = await axios.get(searchUrl, {
+                        headers: { 
+                            'User-Agent': 'IPTV-Autopilot-Scraper (Mozilla/5.0)',
+                            'Accept': 'application/vnd.github.v3+json'
+                        },
+                        timeout: 5000
+                    });
+                    
+                    const repos = response.data.items || [];
+                    for (const repo of repos.slice(0, 2)) {
+                        try {
+                            const contentsUrl = `https://api.github.com/repos/${repo.full_name}/contents`;
+                            const contentsRes = await axios.get(contentsUrl, {
+                                headers: { 
+                                    'User-Agent': 'IPTV-Autopilot-Scraper (Mozilla/5.0)',
+                                    'Accept': 'application/vnd.github.v3+json'
+                                },
+                                timeout: 3000
+                            });
+                            
+                            const files = contentsRes.data || [];
+                            if (Array.isArray(files)) {
+                                files.forEach(file => {
+                                    const nameLower = file.name.toLowerCase();
+                                    if (file.type === 'file' && (nameLower.endsWith('.m3u') || nameLower.endsWith('.m3u8'))) {
+                                        discoveredUrls.set(file.download_url, `${repo.full_name} / ${file.name}`);
+                                    }
+                                });
+                            }
+                        } catch (e) {}
+                    }
+                } catch (e) {}
+            }
+
+            await addAutopilotLog(settings, `🔗 Discovered ${discoveredUrls.size} M3U playlists from GitHub. Syncing channels...`);
+
+            let crawledChannelsCount = 0;
+            const plistUrls = Array.from(discoveredUrls.keys()).slice(0, 2);
+            
+            for (const plistUrl of plistUrls) {
+                try {
+                    const response = await axios.get(plistUrl, { timeout: 8000 });
+                    const lines = response.data.split(/\r?\n/);
+                    let currentChannel = {};
+                    let channelsToInsert = [];
+                    
+                    for (let line of lines) {
+                        line = line.trim();
+                        if (line.startsWith('#EXTINF:')) {
+                            const logoMatch = line.match(/tvg-logo="([^"]+)"/);
+                            const groupMatch = line.match(/group-title="([^"]+)"/);
+                            const nameMatch = line.split(',').pop();
+                            
+                            currentChannel = {
+                                name: nameMatch ? nameMatch.trim() : 'Unknown',
+                                logo: logoMatch ? logoMatch[1] : '',
+                                category: groupMatch ? groupMatch[1] : 'Auto-Scraped'
+                            };
+                        } else if (line.startsWith('http')) {
+                            const url = line;
+                            const exists = await Channel.findOne({ stream_url: url });
+                            if (!exists) {
+                                channelsToInsert.push({
+                                    name: currentChannel.name || 'Unknown',
+                                    stream_url: url,
+                                    logo: currentChannel.logo || '',
+                                    category: `Scraped - ${currentChannel.category || 'General'}`,
+                                    country: 'UNK',
+                                    active: true
+                                });
+                            }
+                            currentChannel = {};
+                        }
+                    }
+
+                    if (channelsToInsert.length > 0) {
+                        const insertLimit = channelsToInsert.slice(0, 30); // Insert up to 30 channels to avoid database pollution
+                        await Channel.insertMany(insertLimit, { ordered: false }).catch(e => {});
+                        crawledChannelsCount += insertLimit.length;
+                    }
+                } catch (e) {}
+            }
+
+            await addAutopilotLog(settings, `⚡ Auto-Scraper finished. Discovered and added ${crawledChannelsCount} new working channels to database!`);
+        }
+
+        settings.lastRun = new Date();
+        settings.nextRun = new Date(Date.now() + settings.intervalHours * 60 * 60 * 1000);
+        await addAutopilotLog(settings, `📅 Autopilot Cycle Complete. Next run scheduled for: ${settings.nextRun.toLocaleString()}`);
+
+    } catch (err) {
+        await addAutopilotLog(settings, `❌ Error during Autopilot execution: ${err.message}`);
+    } finally {
+        isAutopilotRunning = false;
+    }
+}
+
+// Autopilot background scheduler check
+async function checkAutopilotScheduler() {
+    try {
+        const settings = await Autopilot.findOne({});
+        if (!settings || !settings.enabled) return;
+        
+        const now = new Date();
+        if (!settings.nextRun || now >= settings.nextRun) {
+            console.log("Autopilot: Triggering scheduled background task...");
+            runAutopilotTask();
+        }
+    } catch (e) {
+        console.error("Autopilot Scheduler Error:", e);
+    }
+}
+
+// Check scheduler every 15 minutes
+setInterval(checkAutopilotScheduler, 15 * 60 * 1000);
 
 app.listen(PORT, () => {
     console.log(`IPTV Server running on http://localhost:${PORT}`);

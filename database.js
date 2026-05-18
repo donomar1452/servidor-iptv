@@ -1,4 +1,9 @@
+const dns = require('dns');
+if (dns.setDefaultResultOrder) {
+    dns.setDefaultResultOrder('ipv4first');
+}
 const mongoose = require('mongoose');
+
 
 // Cambia esta URL por la de tu cluster gratuito de MongoDB Atlas (lo haremos al subir a Render)
 // Por ahora usa una local o de memoria si quieres probar, pero para Render necesitarás tu URL.
@@ -43,12 +48,24 @@ const channelSchema = new mongoose.Schema({
     logo: String,
     category: String,
     country: { type: String, default: 'Unknown' },
+    active: { type: Boolean, default: true },
     created_at: { type: Date, default: Date.now }
+});
+
+const autopilotSchema = new mongoose.Schema({
+    enabled: { type: Boolean, default: false },
+    intervalHours: { type: Number, default: 24 },
+    actionOnDead: { type: String, enum: ['delete', 'disable', 'none'], default: 'disable' },
+    keywords: { type: [String], default: [] },
+    lastRun: Date,
+    nextRun: Date,
+    logs: { type: [String], default: [] }
 });
 
 // Modelos
 const User = mongoose.model('User', userSchema);
 const Channel = mongoose.model('Channel', channelSchema);
+const Autopilot = mongoose.model('Autopilot', autopilotSchema);
 
 async function initDb() {
     try {
@@ -58,9 +75,22 @@ async function initDb() {
             await User.create({ username: 'admin', password: 'admin', max_connections: 999 });
             console.log("Default admin user created.");
         }
+
+        // Initialize default autopilot settings if not exists
+        const autopilotExists = await Autopilot.findOne({});
+        if (!autopilotExists) {
+            await Autopilot.create({
+                enabled: false,
+                intervalHours: 24,
+                actionOnDead: 'disable',
+                keywords: ['latino', 'deportes'],
+                logs: ['[System] Autopilot initialized. Waiting to be enabled.']
+            });
+            console.log("Default autopilot settings initialized.");
+        }
     } catch (e) {
-        console.error("Error creating default admin:", e);
+        console.error("Error initializing DB values:", e);
     }
 }
 
-module.exports = { User, Channel, mongoose };
+module.exports = { User, Channel, Autopilot, mongoose };
