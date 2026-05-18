@@ -149,77 +149,76 @@ app.get('/api/scraper/deep-search', async (req, res) => {
     if (!query) return res.status(400).json({ error: "Query is required" });
 
     try {
-        console.log(`Starting Deep Scrape for: ${query}`);
+        console.log(`Starting GitHub Deep Scrape for keywords: ${query}`);
         
-        // Search queries to run in parallel on DuckDuckGo
-        const searchQueries = [
-            `${query} iptv m3u`,
-            `${query} "get.php?username="`,
-            `${query} site:pastebin.com "${query}" "EXTM3U"`,
-            `site:github.com "${query}" "EXTM3U" extension:m3u`
-        ];
+        // Search public repositories on GitHub matching iptv + m3u + query
+        const searchUrl = `https://api.github.com/search/repositories?q=iptv+m3u+${encodeURIComponent(query)}&sort=stars&order=desc`;
+        
+        const response = await axios.get(searchUrl, {
+            headers: { 
+                'User-Agent': 'IPTV-Server-Admin-Scraper (Mozilla/5.0)',
+                'Accept': 'application/vnd.github.v3+json'
+            },
+            timeout: 10000
+        });
+        
+        const repos = response.data.items || [];
+        console.log(`Found ${repos.length} repositories matching query. Crawling top 10...`);
+        
+        let discoveredUrls = new Map(); // Use Map to avoid duplicate URLs
 
-        let discoveredUrls = new Set();
-
-        // Fetch results from multiple queries to get the deepest set of links
-        const promises = searchQueries.map(async (searchQuery) => {
+        // Crawl top 10 repos in parallel
+        const promises = repos.slice(0, 10).map(async (repo) => {
             try {
-                const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
-                const response = await axios.get(searchUrl, {
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8'
+                // 1. Scan repository description for external M3U/M3U8 URLs
+                const desc = repo.description || '';
+                const urlRegex = /https?:\/\/[a-zA-Z0-9-._~:\/?#\[\]@!$&'()*+,;=%]+(?:\.m3u8?)/gi;
+                let match;
+                while ((match = urlRegex.exec(desc)) !== null) {
+                    const matchedUrl = match[0];
+                    discoveredUrls.set(matchedUrl, {
+                        name: `${repo.full_name} (Enlace en descripción)`,
+                        url: matchedUrl,
+                        source: 'GitHub Link'
+                    });
+                }
+                
+                // 2. Scan repository root files for M3U playlist files
+                const contentsUrl = `https://api.github.com/repos/${repo.full_name}/contents`;
+                const contentsRes = await axios.get(contentsUrl, {
+                    headers: { 
+                        'User-Agent': 'IPTV-Server-Admin-Scraper (Mozilla/5.0)',
+                        'Accept': 'application/vnd.github.v3+json'
                     },
-                    timeout: 8000
+                    timeout: 5000
                 });
                 
-                const html = response.data;
-                
-                // Extract any URLs that look like IPTV playlists
-                // Matches .m3u, .m3u8, get.php?, playlist.m3u? and prevents matched HTML tags
-                const urlRegex = /https?:\/\/[a-zA-Z0-9-._~:\/?#\[\]@!$&'()*+,;=%]+(?:\.m3u8?|get\.php\?[a-zA-Z0-9-._~:\/?#\[\]@!$&'()*+,;=%]+|playlist\.m3u\?[a-zA-Z0-9-._~:\/?#\[\]@!$&'()*+,;=%]+)/gi;
-                
-                let match;
-                while ((match = urlRegex.exec(html)) !== null) {
-                    let cleanUrl = match[0];
-                    // Clean URL encoded items if wrapped in duckduckgo redirection links
-                    if (cleanUrl.includes('uddg=')) {
-                        const uddgMatch = cleanUrl.match(/uddg=([^&]+)/);
-                        if (uddgMatch) {
-                            cleanUrl = decodeURIComponent(uddgMatch[1]);
+                const files = contentsRes.data || [];
+                if (Array.isArray(files)) {
+                    files.forEach(file => {
+                        const nameLower = file.name.toLowerCase();
+                        const isM3u = nameLower.endsWith('.m3u') || nameLower.endsWith('.m3u8');
+                        const isPlaylistKeyword = nameLower.includes('playlist') || nameLower.includes('lista') || nameLower.includes('canal');
+                        
+                        if (file.type === 'file' && (isM3u || (isPlaylistKeyword && file.size < 5000000))) {
+                            discoveredUrls.set(file.download_url, {
+                                name: `${repo.full_name} / ${file.name}`,
+                                url: file.download_url,
+                                source: 'GitHub File'
+                            });
                         }
-                    }
-                    // Filter out some false positives
-                    if (!cleanUrl.includes('duckduckgo.com') && !cleanUrl.includes('w3.org') && !cleanUrl.includes('githubassets.com')) {
-                        discoveredUrls.add(cleanUrl);
-                    }
+                    });
                 }
             } catch (e) {
-                console.error(`Error scraping query "${searchQuery}":`, e.message);
+                // Silently swallow single repo crawl errors (e.g. empty repo, 404, rate limit on one repo content)
+                console.log(`Skipped repository scanning for ${repo.full_name}: ${e.message}`);
             }
         });
 
         await Promise.all(promises);
 
-        const results = Array.from(discoveredUrls).map((url) => {
-            // Give a friendly name based on domain
-            let name = "Premium List";
-            try {
-                const parsed = new URL(url);
-                name = parsed.hostname.replace('www.', '') + ' Playlist';
-                if (url.includes('pastebin.com')) name = "Pastebin IPTV Paste";
-                if (url.includes('githubusercontent.com')) name = "GitHub Premium IPTV";
-                if (url.includes('get.php')) name = "Xtream Codes Premium (" + parsed.hostname.replace('www.', '') + ")";
-            } catch (e) {}
-
-            return {
-                name: name,
-                url: url,
-                source: url.includes('pastebin.com') ? 'Pastebin' : url.includes('github') ? 'GitHub' : 'Web Crawler'
-            };
-        });
-
-        console.log(`Deep scrape complete. Found ${results.length} unique playlist URLs.`);
+        const results = Array.from(discoveredUrls.values());
+        console.log(`Deep scrape complete. Found ${results.length} active playlists.`);
         res.json(results);
     } catch (err) {
         res.status(500).json({ error: "Deep search failed", details: err.message });
