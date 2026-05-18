@@ -2,7 +2,24 @@ const mongoose = require('mongoose');
 
 // Cambia esta URL por la de tu cluster gratuito de MongoDB Atlas (lo haremos al subir a Render)
 // Por ahora usa una local o de memoria si quieres probar, pero para Render necesitarás tu URL.
-const mongoURI = process.env.MONGO_URI || "mongodb://localhost:27017/iptv";
+let mongoURI = process.env.MONGO_URI || "mongodb://localhost:27017/iptv";
+
+// Programmatic correction for deprecated options in the connection URI string
+try {
+    const urlObj = new URL(mongoURI);
+    let urlChanged = false;
+    for (const key of [...urlObj.searchParams.keys()]) {
+        if (['usenewurlparser', 'useunifiedtopology'].includes(key.toLowerCase())) {
+            urlObj.searchParams.delete(key);
+            urlChanged = true;
+        }
+    }
+    if (urlChanged) {
+        mongoURI = urlObj.toString();
+    }
+} catch (e) {
+    // Leave mongoURI as is if it fails to parse as a standard URL object
+}
 
 mongoose.connect(mongoURI).then(() => {
     console.log('Connected to the MongoDB database.');
