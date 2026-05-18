@@ -25,6 +25,7 @@
                     <li onclick="switchTab('channels')">Live TV</li>
                     <li onclick="switchTab('movies')">Movies (VOD)</li>
                     <li onclick="switchTab('import')">Import M3U</li>
+                    <li onclick="switchTab('explorer')">🌐 IPTV Explorer</li>
                 </ul>
             </nav>
         </aside>
@@ -132,6 +133,56 @@
                         <button class="btn btn-danger" onclick="clearAllChannels()">🗑️ Clear Database (0 channels)</button>
                     </div>
                     <p id="import-status" class="status-msg"></p>
+                </div>
+            </section>
+
+            <!-- EXPLORER TAB -->
+            <section id="tab-explorer" class="tab-content">
+                <header>
+                    <h1>IPTV Public Explorer & Checker</h1>
+                </header>
+                <div class="form-container" style="max-width: 100%; display: flex; gap: 16px; align-items: flex-end; margin-bottom: 24px; flex-wrap: wrap;">
+                    <div class="form-group" style="flex: 1; min-width: 250px; margin-bottom: 0;">
+                        <label>Select Curated Playlist Source</label>
+                        <select id="explorer-preset" class="form-group input" style="width: 100%; padding: 12px 16px; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); border-radius: 8px; color: white;" onchange="loadPresetUrl()">
+                            <option value="">-- Custom URL / Select Preset --</option>
+                            <option value="https://iptv-org.github.io/iptv/countries/es.m3u">🇪🇸 Spain (España) - Curated Free TV</option>
+                            <option value="https://iptv-org.github.io/iptv/countries/mx.m3u">🇲🇽 Mexico (México) - Curated Free TV</option>
+                            <option value="https://iptv-org.github.io/iptv/countries/ar.m3u">🇦🇷 Argentina - Curated Free TV</option>
+                            <option value="https://iptv-org.github.io/iptv/countries/co.m3u">🇨🇴 Colombia - Curated Free TV</option>
+                            <option value="https://iptv-org.github.io/iptv/countries/us.m3u">🇺🇸 USA (Estados Unidos) - Curated Free TV</option>
+                            <option value="https://iptv-org.github.io/iptv/index.m3u">🌐 Global Index (Multi-Country)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex: 2; min-width: 300px; margin-bottom: 0;">
+                        <label>M3U URL to Scrape</label>
+                        <input type="text" id="explorer-m3u-url" placeholder="Paste any public M3U list link here...">
+                    </div>
+                    <button class="btn btn-primary" onclick="scrapePublicList()">🔍 Scrape List</button>
+                </div>
+                
+                <div class="form-container" style="max-width: 100%; margin-bottom: 20px;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <input type="text" id="explorer-search" placeholder="⚡ Filter discovered channels by name or category in real-time..." oninput="renderScrapedChannels()" style="background: rgba(255, 255, 255, 0.05); width: 100%; padding: 12px 16px; border: 1px solid var(--glass-border); border-radius: 8px; color: white; outline: none;">
+                    </div>
+                </div>
+
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Logo</th>
+                                <th>Name</th>
+                                <th>Category / Group</th>
+                                <th>Stream Link</th>
+                                <th>Live Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="explorer-tbody">
+                            <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 32px;">Select a preset playlist or paste a URL above, then click "Scrape List" to start searching!</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </section>
         </main>

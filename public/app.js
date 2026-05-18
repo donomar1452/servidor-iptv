@@ -283,5 +283,123 @@ async function clearAllChannels() {
     }
 }
 
+// --- IPTV EXPLORER LOGIC ---
+let scrapedChannels = [];
+
+function loadPresetUrl() {
+    const select = document.getElementById('explorer-preset');
+    const input = document.getElementById('explorer-m3u-url');
+    if (select.value) {
+        input.value = select.value;
+    }
+}
+
+async function scrapePublicList() {
+    const url = document.getElementById('explorer-m3u-url').value.trim();
+    const tbody = document.getElementById('explorer-tbody');
+    if (!url) return alert("Por favor, selecciona una lista o introduce una URL M3U válida.");
+
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--primary); padding: 32px;">⚡ Descargando y analizando lista pública... Por favor espera.</td></tr>`;
+
+    try {
+        const res = await fetch(`${API_URL}/scraper/list?url=${encodeURIComponent(url)}`);
+        const data = await res.json();
+        
+        if (res.ok) {
+            scrapedChannels = data;
+            renderScrapedChannels();
+        } else {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: #ef4444; padding: 32px;">❌ Error: ${data.error || "No se pudo procesar la lista."}</td></tr>`;
+        }
+    } catch (e) {
+        console.error(e);
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: #ef4444; padding: 32px;">❌ Error de conexión al conectar con el servidor de raspado.</td></tr>`;
+    }
+}
+
+function renderScrapedChannels() {
+    const tbody = document.getElementById('explorer-tbody');
+    const searchVal = document.getElementById('explorer-search').value.toLowerCase().trim();
+    
+    let filtered = scrapedChannels;
+    if (searchVal) {
+        filtered = scrapedChannels.filter(c => 
+            (c.name && c.name.toLowerCase().includes(searchVal)) || 
+            (c.category && c.category.toLowerCase().includes(searchVal))
+        );
+    }
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 32px;">No se encontraron canales que coincidan con la búsqueda.</td></tr>`;
+        return;
+    }
+
+    let htmlStr = '';
+    filtered.forEach((c, index) => {
+        const streamUrlShort = c.stream_url.length > 50 ? c.stream_url.substring(0, 50) + "..." : c.stream_url;
+        
+        htmlStr += `
+            <tr id="scraped-row-${index}">
+                <td><img src="${c.logo || 'https://via.placeholder.com/40'}" class="ch-logo" loading="lazy" onerror="this.src='https://via.placeholder.com/40'"></td>
+                <td><strong>${c.name}</strong></td>
+                <td><span style="font-size:0.85rem; color:var(--text-muted);">${c.category}</span></td>
+                <td><span class="link-box" style="font-family: monospace; font-size: 0.75rem;" onclick="copyToClipboard('${c.stream_url}')" title="${c.stream_url}">${streamUrlShort}</span></td>
+                <td id="status-col-${index}">
+                    <button class="btn" style="padding: 4px 10px; font-size: 0.8rem; background: rgba(59, 130, 246, 0.1); border: 1px solid var(--primary); color: var(--primary);" onclick="checkStreamStatus('${c.stream_url}', ${index})">🔍 Check Live</button>
+                </td>
+                <td>
+                    <button class="btn btn-primary" style="padding: 6px 12px; font-size: 0.85rem;" onclick="addScrapedChannel(${index})">+ Add Channel</button>
+                </td>
+            </tr>
+        `;
+    });
+    tbody.innerHTML = htmlStr;
+}
+
+async function checkStreamStatus(streamUrl, index) {
+    const col = document.getElementById(`status-col-${index}`);
+    col.innerHTML = `<span style="font-size:0.85rem; color:var(--primary);">Checking...</span>`;
+
+    try {
+        const res = await fetch(`${API_URL}/channels/check`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stream_url: streamUrl })
+        });
+        const data = await res.json();
+        
+        if (res.ok && data.status === "ONLINE") {
+            col.innerHTML = `<span class="status-badge" style="background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4);">🟢 ONLINE (${data.code})</span>`;
+        } else {
+            col.innerHTML = `<span class="status-badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">🔴 OFFLINE</span>`;
+        }
+    } catch (e) {
+        col.innerHTML = `<span class="status-badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">🔴 ERROR</span>`;
+    }
+}
+
+async function addScrapedChannel(index) {
+    const c = scrapedChannels[index];
+    if (!c) return;
+    try {
+        const res = await fetch(`${API_URL}/channels`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: c.name, stream_url: c.stream_url, logo: c.logo, category: c.category })
+        });
+        const data = await res.json();
+        
+        if (res.ok) {
+            alert(`¡Canal "${c.name}" agregado correctamente a tu servidor!`);
+            loadChannels(); // Refresh live TV tab
+        } else {
+            alert("Error al agregar canal: " + (data.error || "Desconocido"));
+        }
+    } catch (e) {
+        console.error(e);
+        alert("Error de conexión al guardar el canal.");
+    }
+}
+
 // Init
 window.onload = loadUsers;
