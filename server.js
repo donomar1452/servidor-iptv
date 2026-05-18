@@ -143,6 +143,89 @@ app.get('/api/scraper/list', async (req, res) => {
     }
 });
 
+// Deep IPTV Playlist Search Scraper
+app.get('/api/scraper/deep-search', async (req, res) => {
+    const { query } = req.query;
+    if (!query) return res.status(400).json({ error: "Query is required" });
+
+    try {
+        console.log(`Starting Deep Scrape for: ${query}`);
+        
+        // Search queries to run in parallel on DuckDuckGo
+        const searchQueries = [
+            `${query} iptv m3u`,
+            `${query} "get.php?username="`,
+            `${query} site:pastebin.com "${query}" "EXTM3U"`,
+            `site:github.com "${query}" "EXTM3U" extension:m3u`
+        ];
+
+        let discoveredUrls = new Set();
+
+        // Fetch results from multiple queries to get the deepest set of links
+        const promises = searchQueries.map(async (searchQuery) => {
+            try {
+                const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
+                const response = await axios.get(searchUrl, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8'
+                    },
+                    timeout: 8000
+                });
+                
+                const html = response.data;
+                
+                // Extract any URLs that look like IPTV playlists
+                // Matches .m3u, .m3u8, get.php?, playlist.m3u? and prevents matched HTML tags
+                const urlRegex = /https?:\/\/[a-zA-Z0-9-._~:\/?#\[\]@!$&'()*+,;=%]+(?:\.m3u8?|get\.php\?[a-zA-Z0-9-._~:\/?#\[\]@!$&'()*+,;=%]+|playlist\.m3u\?[a-zA-Z0-9-._~:\/?#\[\]@!$&'()*+,;=%]+)/gi;
+                
+                let match;
+                while ((match = urlRegex.exec(html)) !== null) {
+                    let cleanUrl = match[0];
+                    // Clean URL encoded items if wrapped in duckduckgo redirection links
+                    if (cleanUrl.includes('uddg=')) {
+                        const uddgMatch = cleanUrl.match(/uddg=([^&]+)/);
+                        if (uddgMatch) {
+                            cleanUrl = decodeURIComponent(uddgMatch[1]);
+                        }
+                    }
+                    // Filter out some false positives
+                    if (!cleanUrl.includes('duckduckgo.com') && !cleanUrl.includes('w3.org') && !cleanUrl.includes('githubassets.com')) {
+                        discoveredUrls.add(cleanUrl);
+                    }
+                }
+            } catch (e) {
+                console.error(`Error scraping query "${searchQuery}":`, e.message);
+            }
+        });
+
+        await Promise.all(promises);
+
+        const results = Array.from(discoveredUrls).map((url) => {
+            // Give a friendly name based on domain
+            let name = "Premium List";
+            try {
+                const parsed = new URL(url);
+                name = parsed.hostname.replace('www.', '') + ' Playlist';
+                if (url.includes('pastebin.com')) name = "Pastebin IPTV Paste";
+                if (url.includes('githubusercontent.com')) name = "GitHub Premium IPTV";
+                if (url.includes('get.php')) name = "Xtream Codes Premium (" + parsed.hostname.replace('www.', '') + ")";
+            } catch (e) {}
+
+            return {
+                name: name,
+                url: url,
+                source: url.includes('pastebin.com') ? 'Pastebin' : url.includes('github') ? 'GitHub' : 'Web Crawler'
+            };
+        });
+
+        console.log(`Deep scrape complete. Found ${results.length} unique playlist URLs.`);
+        res.json(results);
+    } catch (err) {
+        res.status(500).json({ error: "Deep search failed", details: err.message });
+    }
+});
+
 // Add single channel
 app.post('/api/channels', async (req, res) => {
     try {
