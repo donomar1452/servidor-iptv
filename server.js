@@ -40,6 +40,14 @@ app.get('/api/channels', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Delete all channels
+app.delete('/api/channels', async (req, res) => {
+    try {
+        await Channel.deleteMany({});
+        res.json({ message: "Todos los canales han sido eliminados correctamente." });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Add single channel
 app.post('/api/channels', async (req, res) => {
     try {
@@ -148,7 +156,8 @@ app.get('/get.php', handleM3uRequest);
 app.get('/playlist.m3u', handleM3uRequest);
 
 async function handleM3uRequest(req, res) {
-    const { username, password } = req.query;
+    const { username, password, direct } = req.query;
+    const isDirect = direct === 'true';
 
     try {
         const user = await User.findOne({ username, password, active: true });
@@ -161,7 +170,7 @@ async function handleM3uRequest(req, res) {
         const host = req.protocol + '://' + req.get('host');
 
         // Use cursor to stream channels row by row
-        const cursor = Channel.find().cursor();
+        const cursor = Channel.find().lean().cursor();
         
         cursor.on('data', (ch) => {
             const safeName = ch.name ? ch.name.replace(/\n/g, '') : 'Unknown';
@@ -169,7 +178,12 @@ async function handleM3uRequest(req, res) {
             const safeCat = ch.category ? ch.category.replace(/\n/g, '') : 'General';
             
             res.write(`#EXTINF:-1 tvg-id="" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeCat}",${safeName}\n`);
-            res.write(`${host}/live/${username}/${password}/${ch._id}.m3u8\n`);
+            
+            if (isDirect) {
+                res.write(`${ch.stream_url}\n`);
+            } else {
+                res.write(`${host}/live/${username}/${password}/${ch._id}.m3u8\n`);
+            }
         });
         
         cursor.on('close', () => {
