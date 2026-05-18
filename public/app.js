@@ -17,6 +17,7 @@ function switchTab(tabId) {
     
     if (tabId === 'users') loadUsers();
     if (tabId === 'channels' || tabId === 'movies') loadChannels();
+    if (tabId === 'autopilot') loadAutopilot();
 }
 
 // Modals
@@ -493,6 +494,133 @@ function loadAndScrapePlaylist(index) {
     
     // Execute scrape
     scrapePublicList();
+}
+
+// Autopilot Panel Frontend
+let autopilotLogTimer = null;
+
+async function loadAutopilot() {
+    const logsDiv = document.getElementById('autopilot-logs');
+    
+    try {
+        const res = await fetch(`${API_URL}/autopilot`);
+        const settings = await res.json();
+        
+        if (res.ok && settings) {
+            document.getElementById('autopilot-enabled').checked = settings.enabled;
+            document.getElementById('autopilot-interval').value = settings.intervalHours;
+            document.getElementById('autopilot-action').value = settings.actionOnDead;
+            document.getElementById('autopilot-keywords').value = settings.keywords ? settings.keywords.join(', ') : '';
+            
+            document.getElementById('autopilot-last-run').innerText = settings.lastRun ? new Date(settings.lastRun).toLocaleString() : 'Never';
+            document.getElementById('autopilot-next-run').innerText = settings.nextRun ? new Date(settings.nextRun).toLocaleString() : 'Inactive';
+            
+            if (settings.logs && settings.logs.length > 0) {
+                logsDiv.innerText = settings.logs.join('\n');
+                // Auto scroll to bottom
+                logsDiv.scrollTop = logsDiv.scrollHeight;
+            } else {
+                logsDiv.innerText = "No activity logs recorded yet.";
+            }
+        }
+    } catch (err) {
+        console.error("Failed to load autopilot settings:", err);
+        logsDiv.innerText = "❌ Error connecting to server to load logs.";
+    }
+    
+    // Setup continuous polling for logs every 4 seconds while on autopilot tab
+    if (autopilotLogTimer) clearInterval(autopilotLogTimer);
+    autopilotLogTimer = setInterval(pollAutopilotLogs, 4000);
+}
+
+async function pollAutopilotLogs() {
+    // Stop polling if we navigated away from autopilot tab
+    const autopilotTab = document.getElementById('tab-autopilot');
+    if (!autopilotTab || !autopilotTab.classList.contains('active')) {
+        clearInterval(autopilotLogTimer);
+        autopilotLogTimer = null;
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_URL}/autopilot`);
+        const settings = await res.json();
+        if (res.ok && settings) {
+            document.getElementById('autopilot-last-run').innerText = settings.lastRun ? new Date(settings.lastRun).toLocaleString() : 'Never';
+            document.getElementById('autopilot-next-run').innerText = settings.nextRun ? new Date(settings.nextRun).toLocaleString() : 'Inactive';
+            
+            const logsDiv = document.getElementById('autopilot-logs');
+            const wasScrolledToBottom = logsDiv.scrollHeight - logsDiv.clientHeight <= logsDiv.scrollTop + 1;
+            
+            logsDiv.innerText = settings.logs && settings.logs.length > 0 ? settings.logs.join('\n') : "No activity logs recorded yet.";
+            
+            if (wasScrolledToBottom) {
+                logsDiv.scrollTop = logsDiv.scrollHeight;
+            }
+        }
+    } catch (e) {}
+}
+
+async function saveAutopilotSettings() {
+    const enabled = document.getElementById('autopilot-enabled').checked;
+    const intervalHours = document.getElementById('autopilot-interval').value;
+    const actionOnDead = document.getElementById('autopilot-action').value;
+    
+    // Parse keywords
+    const kwInput = document.getElementById('autopilot-keywords').value.trim();
+    const keywords = kwInput ? kwInput.split(',').map(s => s.trim()).filter(Boolean) : [];
+    
+    const statusMsg = document.getElementById('autopilot-status');
+    statusMsg.innerText = "Saving settings...";
+    statusMsg.style.color = "var(--primary)";
+    
+    try {
+        const res = await fetch(`${API_URL}/autopilot`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled, intervalHours, actionOnDead, keywords })
+        });
+        
+        const data = await res.json();
+        if (res.ok) {
+            statusMsg.innerText = "💾 Autopilot settings saved successfully!";
+            statusMsg.style.color = "#34d399";
+            loadAutopilot(); // Reload values and logs
+            setTimeout(() => { statusMsg.innerText = ""; }, 3000);
+        } else {
+            statusMsg.innerText = `❌ Error: ${data.error}`;
+            statusMsg.style.color = "#ef4444";
+        }
+    } catch (err) {
+        console.error(err);
+        statusMsg.innerText = "❌ Network error. Failed to save settings.";
+        statusMsg.style.color = "#ef4444";
+    }
+}
+
+async function triggerAutopilotManual() {
+    const btn = document.getElementById('btn-run-autopilot');
+    const originalText = btn.innerText;
+    btn.innerText = "⏳ Executing Worker...";
+    btn.disabled = true;
+    
+    try {
+        const res = await fetch(`${API_URL}/autopilot/run`, { method: 'POST' });
+        const data = await res.json();
+        
+        if (res.ok) {
+            alert("🚀 Autopilot background sync has been triggered successfully! Keep an eye on the activity logs to see its real-time progress.");
+            // Poll logs immediately
+            setTimeout(loadAutopilot, 1000);
+        } else {
+            alert(`❌ Error: ${data.error || "Failed to trigger autopilot"}`);
+        }
+    } catch (err) {
+        alert("❌ Network connection failed. Could not trigger autopilot.");
+    } finally {
+        btn.innerText = originalText;
+        btn.disabled = false;
+    }
 }
 
 // Init

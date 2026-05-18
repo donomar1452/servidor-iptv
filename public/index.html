@@ -26,6 +26,7 @@
                     <li onclick="switchTab('movies')">Movies (VOD)</li>
                     <li onclick="switchTab('import')">Import M3U</li>
                     <li onclick="switchTab('explorer')">🌐 IPTV Explorer</li>
+                    <li onclick="switchTab('autopilot')">⚡ Autopilot</li>
                 </ul>
             </nav>
         </aside>
@@ -217,6 +218,80 @@
                                 <tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 32px;">Type keywords above and click "Deep Crawl Web" to scrape online gists, pastes and servers.</td></tr>
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- AUTOPILOT TAB -->
+            <section id="tab-autopilot" class="tab-content">
+                <header>
+                    <h1>⚡ Automated Autopilot System</h1>
+                    <button class="btn btn-primary" id="btn-run-autopilot" onclick="triggerAutopilotManual()">🚀 Trigger Autopilot Now</button>
+                </header>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px;">
+                    <!-- Settings Card -->
+                    <div class="form-container" style="max-width: 100%; margin-bottom: 0;">
+                        <h3 style="color: var(--primary); margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">⚙️ Autopilot Configuration</h3>
+                        
+                        <div class="form-group" style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid var(--glass-border); margin-bottom: 16px;">
+                            <div>
+                                <label style="margin-bottom: 2px; font-weight: 600;">Enable Autopilot</label>
+                                <span style="font-size: 0.8rem; color: var(--text-muted);">Run background sync & health check automatically</span>
+                            </div>
+                            <input type="checkbox" id="autopilot-enabled" style="width: 24px; height: 24px; cursor: pointer;">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Sync & Scan Frequency</label>
+                            <select id="autopilot-interval" class="form-group input" style="width: 100%; padding: 10px; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); border-radius: 8px; color: white;">
+                                <option value="6">Every 6 Hours</option>
+                                <option value="12">Every 12 Hours</option>
+                                <option value="24" selected>Every 24 Hours (Daily)</option>
+                                <option value="48">Every 48 Hours (Every 2 Days)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Action on Dead Streams</label>
+                            <select id="autopilot-action" class="form-group input" style="width: 100%; padding: 10px; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); border-radius: 8px; color: white;">
+                                <option value="disable" selected>Mark as Offline (Hide from M3U but keep in DB)</option>
+                                <option value="delete">Delete Permanently (Deletes dead channels from DB)</option>
+                                <option value="none">Do Nothing (Only log health status)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Auto-Scraper Search Keywords (Comma separated)</label>
+                            <input type="text" id="autopilot-keywords" placeholder="e.g. latino, deportes, spain" style="width: 100%;">
+                            <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 4px;">Autopilot crawls public M3U repositories for these keywords and adds new working streams.</span>
+                        </div>
+
+                        <button class="btn btn-primary" onclick="saveAutopilotSettings()" style="width: 100%; padding: 12px; margin-top: 16px;">💾 Save & Apply Settings</button>
+                        <p id="autopilot-status" class="status-msg" style="text-align: center; margin-top: 8px;"></p>
+                    </div>
+
+                    <!-- Status & Stats Card -->
+                    <div class="form-container" style="max-width: 100%; margin-bottom: 0; display: flex; flex-direction: column;">
+                        <h3 style="color: var(--primary); margin-bottom: 16px;">📊 Current System Status</h3>
+                        
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--glass-border); border-radius: 8px; padding: 12px; text-align: center;">
+                                <span style="font-size: 0.8rem; color: var(--text-muted);">Last Sync Execution</span>
+                                <h4 id="autopilot-last-run" style="margin-top: 4px; font-weight: 600; color: #fff;">Never</h4>
+                            </div>
+                            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--glass-border); border-radius: 8px; padding: 12px; text-align: center;">
+                                <span style="font-size: 0.8rem; color: var(--text-muted);">Next Scheduled Run</span>
+                                <h4 id="autopilot-next-run" style="margin-top: 4px; font-weight: 600; color: var(--primary);">Inactive</h4>
+                            </div>
+                        </div>
+
+                        <div style="flex: 1; display: flex; flex-direction: column; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 8px; padding: 12px;">
+                            <span style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; font-weight: bold;">🤖 Autopilot Activity Logs:</span>
+                            <div id="autopilot-logs" style="flex: 1; min-height: 180px; max-height: 250px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; color: #34d399; line-height: 1.5; white-space: pre-wrap; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px;">
+                                Loading autopilot status logs...
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
