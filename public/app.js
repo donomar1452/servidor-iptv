@@ -10,10 +10,13 @@ function switchTab(tabId) {
     document.querySelectorAll('.sidebar li').forEach(li => li.classList.remove('active'));
     
     document.getElementById(`tab-${tabId}`).classList.add('active');
-    event.target.classList.add('active');
-
+    
+    // Safely highlight active sidebar item
+    const activeItem = document.querySelector(`.sidebar li[onclick*="switchTab('${tabId}')"]`);
+    if (activeItem) activeItem.classList.add('active');
+    
     if (tabId === 'users') loadUsers();
-    if (tabId === 'channels') loadChannels();
+    if (tabId === 'channels' || tabId === 'movies') loadChannels();
 }
 
 // Modals
@@ -48,10 +51,20 @@ async function loadChannels() {
         const res = await fetch(`${API_URL}/channels`);
         globalChannels = await res.json();
         
-        // Split into Live TV and Movies based on category keywords
+        // Split into Live TV and Movies based on category keywords safely
         const movieRegex = /movie|cine|pelicula|vod|serie|film|drama|comedia|acción/i;
-        liveChannels = globalChannels.filter(c => !movieRegex.test(c.category) && !c.stream_url.endsWith('.mp4'));
-        movieChannels = globalChannels.filter(c => movieRegex.test(c.category) || c.stream_url.endsWith('.mp4'));
+        
+        liveChannels = globalChannels.filter(c => {
+            const category = c.category || 'General';
+            const streamUrl = c.stream_url || '';
+            return !movieRegex.test(category) && !streamUrl.endsWith('.mp4');
+        });
+        
+        movieChannels = globalChannels.filter(c => {
+            const category = c.category || 'General';
+            const streamUrl = c.stream_url || '';
+            return movieRegex.test(category) || streamUrl.endsWith('.mp4');
+        });
         
         // Populate Live TV filters
         const categoryFilter = document.getElementById('category-filter');
@@ -77,7 +90,7 @@ async function loadChannels() {
 
         renderChannels();
         renderMovies();
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("Error loading channels:", e); }
 }
 
 function renderChannels() {
