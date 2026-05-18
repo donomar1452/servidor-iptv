@@ -612,9 +612,18 @@ async function runAutopilotTask() {
     try {
         await addAutopilotLog(settings, "🚀 Starting Autopilot Background Sync & Health Check...");
 
-        // 1. Validate stream health of existing channels
+        // 1. Validate stream health of existing MOVIE (VOD) channels only! Leave Live TV untouched!
         const channels = await Channel.find({});
-        await addAutopilotLog(settings, `🔍 Health Check: Scanning ${channels.length} channels in database...`);
+        const movieRegex = /movie|cine|pelicula|vod|serie|film|drama|comedia|acción/i;
+        
+        const movieChannels = channels.filter(ch => {
+            const cat = ch.category || 'General';
+            const url = ch.stream_url || '';
+            const name = ch.name || '';
+            return movieRegex.test(cat) || movieRegex.test(name) || url.endsWith('.mp4') || url.endsWith('.mkv');
+        });
+
+        await addAutopilotLog(settings, `🔍 Health Check: Scanning ${movieChannels.length} movie (VOD) channels in database (Live TV skipped)...`);
 
         let onlineCount = 0;
         let offlineCount = 0;
@@ -622,8 +631,8 @@ async function runAutopilotTask() {
 
         // Check streams in concurrent batches of 15 to avoid overloading
         const batchSize = 15;
-        for (let i = 0; i < channels.length; i += batchSize) {
-            const batch = channels.slice(i, i + batchSize);
+        for (let i = 0; i < movieChannels.length; i += batchSize) {
+            const batch = movieChannels.slice(i, i + batchSize);
             await Promise.all(batch.map(async (ch) => {
                 let isAlive = false;
                 try {
