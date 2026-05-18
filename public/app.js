@@ -32,14 +32,13 @@ async function loadUsers() {
         tbody.innerHTML = '';
         
         users.forEach(u => {
-            const m3uLink = `${window.location.origin}/playlist.m3u?username=${u.username}&password=PON_AQUI_LA_CONTRASEÑA`;
             tbody.innerHTML += `
                 <tr>
                     <td>#${u.id}</td>
                     <td><strong>${u.username}</strong></td>
                     <td>${u.max_connections}</td>
                     <td><span class="status-badge ${u.active ? 'status-active' : ''}">${u.active ? 'Active' : 'Inactive'}</span></td>
-                    <td><span class="link-box" onclick="copyToClipboard('${m3uLink}')">Copy Link</span></td>
+                    <td><span class="link-box" onclick="copyPlaylistLink('${u.username}')">Copy Link</span></td>
                 </tr>
             `;
         });
@@ -222,6 +221,27 @@ async function importM3U() {
     } catch (e) {
         status.innerText = "Failed to connect to server.";
         status.style.color = "#ef4444";
+    }
+}
+
+// Copy Playlist Link with custom password input
+function copyPlaylistLink(username) {
+    const password = prompt(`Introduce la contraseña de "${username}" para generar el enlace completo (o déjala en blanco para rellenarla manualmente más tarde):`);
+    
+    // If they cancel, don't copy anything
+    if (password === null) return;
+    
+    const finalPassword = password.trim() || "PON_AQUI_LA_CONTRASEÑA";
+    const m3uLink = `${window.location.origin}/playlist.m3u?username=${username}&password=${finalPassword}`;
+    
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(m3uLink).then(() => {
+            alert("¡Enlace M3U copiado al portapapeles con éxito!");
+        }).catch(err => {
+            prompt("Copia este enlace manualmente:", m3uLink);
+        });
+    } else {
+        prompt("Copia este enlace manualmente:", m3uLink);
     }
 }
 
