@@ -34,7 +34,8 @@ app.post('/api/users', async (req, res) => {
 // Get all channels
 app.get('/api/channels', async (req, res) => {
     try {
-        const channels = await Channel.find();
+        // Use .lean() to return raw JSON instead of heavy Mongoose documents (saves massive RAM)
+        const channels = await Channel.find().lean();
         res.json(channels.map(c => ({ id: c._id, name: c.name, stream_url: c.stream_url, logo: c.logo, category: c.category, country: c.country })));
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -54,6 +55,10 @@ app.post('/api/m3u/import', async (req, res) => {
     if (!m3u_url) return res.status(400).json({error: "M3U URL is required"});
     
     try {
+        // Clear previous channels before importing a new list to prevent duplicates and server OOM crashes
+        console.log("Clearing previous channels from database...");
+        await Channel.deleteMany({});
+        
         console.log(`Starting download for M3U: ${m3u_url}`);
         const response = await axios.get(m3u_url, {
             headers: {
