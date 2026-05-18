@@ -48,6 +48,101 @@ app.delete('/api/channels', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Validate individual stream URL status (live checker)
+app.post('/api/channels/check', async (req, res) => {
+    const { stream_url } = req.body;
+    if (!stream_url) return res.status(400).json({ error: "Stream URL is required" });
+
+    try {
+        // Try HEAD request first (faster, saves bandwidth)
+        const response = await axios.head(stream_url, {
+            headers: { 
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': '*/*'
+            },
+            timeout: 5000
+        });
+        
+        if (response.status >= 200 && response.status < 400) {
+            return res.json({ status: "ONLINE", code: response.status });
+        }
+        return res.json({ status: "OFFLINE", code: response.status });
+    } catch (err) {
+        // Fallback to GET request for streams that reject HEAD requests
+        try {
+            const getResponse = await axios.get(stream_url, {
+                headers: { 
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept': '*/*'
+                },
+                timeout: 5000,
+                maxContentLength: 50000 // Limit downloaded bytes
+            });
+            if (getResponse.status >= 200 && getResponse.status < 400) {
+                return res.json({ status: "ONLINE", code: getResponse.status });
+            }
+        } catch (innerErr) {
+            return res.json({ status: "OFFLINE", error: innerErr.message });
+        }
+        return res.json({ status: "OFFLINE", error: err.message });
+    }
+});
+
+// Scrape/fetch a public M3U list and parse it
+app.get('/api/scraper/list', async (req, res) => {
+    const { url } = req.query;
+    if (!url) return res.status(400).json({ error: "URL is required" });
+    
+    try {
+        const response = await axios.get(url, {
+            headers: { 
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            },
+            timeout: 20000,
+            maxContentLength: 50 * 1024 * 1024 // 50MB max file size limit
+        });
+        
+        const lines = response.data.split(/\r?\n/);
+        let channels = [];
+        let currentChannel = {};
+        
+        for (let line of lines) {
+            line = line.trim();
+            if (line.startsWith('#EXTINF:')) {
+                const logoMatch = line.match(/tvg-logo="([^"]+)"/);
+                const groupMatch = line.match(/group-title="([^"]+)"/);
+                const countryMatch = line.match(/tvg-country="([^"]+)"/);
+                const nameMatch = line.split(',').pop();
+                
+                let cat = groupMatch ? groupMatch[1] : 'General';
+                let ctry = countryMatch ? countryMatch[1].toUpperCase() : 'UNK';
+                
+                currentChannel = {
+                    name: nameMatch ? nameMatch.trim() : 'Unknown',
+                    logo: logoMatch ? logoMatch[1] : '',
+                    category: ctry !== 'UNK' ? `${ctry} - ${cat}` : cat,
+                    country: ctry
+                };
+            } else if (line.startsWith('http')) {
+                currentChannel.stream_url = line;
+                channels.push({
+                    name: currentChannel.name || 'Unknown',
+                    stream_url: currentChannel.stream_url,
+                    logo: currentChannel.logo || '',
+                    category: currentChannel.category || 'General',
+                    country: currentChannel.country || 'Unknown'
+                });
+                currentChannel = {};
+            }
+        }
+        
+        // Return up to 300 channels to keep the client UI fluid and super fast
+        res.json(channels.slice(0, 300));
+    } catch (err) {
+        res.status(500).json({ error: "Failed to scrape playlist", details: err.message });
+    }
+});
+
 // Add single channel
 app.post('/api/channels', async (req, res) => {
     try {
