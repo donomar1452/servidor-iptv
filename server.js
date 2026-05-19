@@ -591,7 +591,7 @@ app.post('/api/autopilot/run', async (req, res) => {
 let isAutopilotRunning = false;
 
 // Helper to precisely detect VOD (movies & series) channels, keeping Live TV untouched
-function isVODChannel(ch) {
+function isVODChannel(ch, isScrapePhase = false) {
     if (!ch) return false;
     const name = (ch.name || '').toLowerCase();
     const cat = (ch.category || '').toLowerCase();
@@ -613,14 +613,21 @@ function isVODChannel(ch) {
     }
 
     // 4. Keywords for movies but EXCLUDING keywords indicating live television channels
-    const vodKeywords = ['vod', 'pelicula', 'película', 'filme', 'film', 'estreno', 'estrenos', 'cinema hd', 'cine-hd', 'cine hd'];
-    const liveKeywords = ['live', 'tv', 'television', 'televisión', 'canal', 'canales', 'en vivo', 'señal', 'tdt', 'deportes', 'sports', 'noticias', 'news', 'hbo', 'star channel', 'warner', 'axn', 'tnt', 'fox', 'cinecanal', 'cine latino', 'cine de hoy', 'cinema live', 'cine live'];
+    const vodKeywords = ['vod', 'pelicula', 'película', 'filme', 'film', 'estreno', 'estrenos', 'cinema hd', 'cine-hd', 'cine hd', 'movie', 'movies', 'series'];
+    const liveKeywords = ['live', 'tv', 'television', 'televisión', 'canal', 'canales', 'en vivo', 'señal', 'tdt', 'deportes', 'sports', 'noticias', 'news', 'hbo', 'star channel', 'warner', 'axn', 'tnt', 'fox', 'cinecanal', 'cine latino', 'cine de hoy', 'cinema live', 'cine live', 'tele', 'broadcasting'];
 
     const matchesVOD = vodKeywords.some(kw => cat.includes(kw) || name.includes(kw));
     const matchesLive = liveKeywords.some(kw => cat.includes(kw) || name.includes(kw));
 
     if (matchesVOD && !matchesLive) {
         return true;
+    }
+
+    // 5. During scrape phase, if the playlist is from Autopilot, we consider all channels VOD unless they explicitly match live TV
+    if (isScrapePhase) {
+        if (!matchesLive) {
+            return true;
+        }
     }
 
     return false;
@@ -711,76 +718,41 @@ async function runAutopilotTask() {
 
         // 2. Auto-crawl keywords to find new fresh M3U playlists and add new channels
         if (settings.keywords && settings.keywords.length > 0) {
-            await addAutopilotLog(settings, `📡 Scraper: Deep Crawling keywords [${settings.keywords.join(', ')}]...`);
+            // Build target VOD queries
+            const targetQueries = ['iptv peliculas', 'iptv movies', 'iptv vod', 'm3u peliculas', 'm3u movies'];
+            
+            // Add user keywords combined with 'iptv' or 'm3u' to keep them highly targeted
+            settings.keywords.forEach(kw => {
+                const cleanKw = kw.trim();
+                if (cleanKw) {
+                    targetQueries.push(`iptv ${cleanKw}`);
+                    targetQueries.push(`m3u ${cleanKw}`);
+                }
+            });
+
+            // Deduplicate queries and select up to 3 queries to avoid GitHub search API rate limits
+            const activeQueries = [...new Set(targetQueries)].sort(() => 0.5 - Math.random()).slice(0, 3);
+            
+            await addAutopilotLog(settings, `📡 Scraper: Deep Crawling GitHub repositories for [${activeQueries.join(', ')}]...`);
             
             let discoveredUrls = new Map();
 
-            // 1. Single combined DuckDuckGo query (rate-limit immune)
-            try {
-                // Include user keywords but always append movie/VOD terms since Autopilot only imports movies/VOD
-                const searchKeywords = [...new Set([...settings.keywords, 'peliculas', 'vod', 'movies', 'estrenos'])];
-                const combined = searchKeywords.map(k => encodeURIComponent(k.trim())).join('+OR+');
-                const searchUrl = `https://html.duckduckgo.com/html/?q=site:pastebin.com+OR+site:gist.github.com+OR+site:github.com+iptv+m3u+(${combined})`;
-                
-                const response = await axios.get(searchUrl, {
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                    },
-                    timeout: 8000
-                });
-
-                const html = response.data;
-                const regex = /uddg=([^"&'\s>]+)/gi;
-                let match;
-
-                while ((match = regex.exec(html)) !== null) {
-                    try {
-                        let rawUrl = decodeURIComponent(match[1]);
-                        if (rawUrl.includes('//duckduckgo.com') || !rawUrl.startsWith('http')) continue;
-
-                        let isTarget = false;
-                        if (rawUrl.includes('pastebin.com')) {
-                            isTarget = true;
-                            if (!rawUrl.includes('/raw/')) {
-                                rawUrl = rawUrl.replace(/pastebin\.com\/([a-zA-Z0-9]+)$/, 'pastebin.com/raw/$1');
-                            }
-                        } else if (rawUrl.includes('gist.github.com')) {
-                            isTarget = true;
-                            if (!rawUrl.includes('/raw')) {
-                                rawUrl = rawUrl + '/raw';
-                            }
-                        } else if (rawUrl.includes('github.com')) {
-                            isTarget = true;
-                            if (rawUrl.includes('/blob/')) {
-                                rawUrl = rawUrl.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
-                            }
-                        }
-
-                        if (isTarget) {
-                            discoveredUrls.set(rawUrl, 'Web Search');
-                        }
-                    } catch (e) {}
-                }
-            } catch (err) {
-                console.error(`Error crawling DDG for combined keywords:`, err.message);
-            }
-
-            // 2. Select up to 2 random keywords to query GitHub API (to avoid rate limits)
-            const movieSearchKeywords = [...new Set([...settings.keywords, 'peliculas', 'vod', 'movies'])];
-            const githubKeywords = movieSearchKeywords.sort(() => 0.5 - Math.random()).slice(0, 2);
-            for (const keyword of githubKeywords) {
+            for (const q of activeQueries) {
                 try {
-                    const searchUrl = `https://api.github.com/search/repositories?q=iptv+m3u+${encodeURIComponent(keyword.trim())}&sort=stars&order=desc`;
+                    const searchUrl = `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc`;
                     const response = await axios.get(searchUrl, {
                         headers: { 
                             'User-Agent': 'IPTV-Autopilot-Scraper (Mozilla/5.0)',
                             'Accept': 'application/vnd.github.v3+json'
                         },
-                        timeout: 5000
+                        timeout: 6000
                     });
                     
                     const repos = response.data.items || [];
-                    for (const repo of repos.slice(0, 1)) {
+                    // Process top 4 repositories per search result to find many M3U playlists
+                    const topRepos = repos.slice(0, 4);
+                    
+                    await Promise.all(topRepos.map(async (repo) => {
                         try {
                             const contentsUrl = `https://api.github.com/repos/${repo.full_name}/contents`;
                             const contentsRes = await axios.get(contentsUrl, {
@@ -788,7 +760,7 @@ async function runAutopilotTask() {
                                     'User-Agent': 'IPTV-Autopilot-Scraper (Mozilla/5.0)',
                                     'Accept': 'application/vnd.github.v3+json'
                                 },
-                                timeout: 3000
+                                timeout: 4000
                             });
                             
                             const files = contentsRes.data || [];
@@ -796,13 +768,23 @@ async function runAutopilotTask() {
                                 files.forEach(file => {
                                     const nameLower = file.name.toLowerCase();
                                     if (file.type === 'file' && (nameLower.endsWith('.m3u') || nameLower.endsWith('.m3u8'))) {
-                                        discoveredUrls.set(file.download_url, keyword);
+                                        discoveredUrls.set(file.download_url, {
+                                            name: `${repo.full_name} / ${file.name}`,
+                                            url: file.download_url
+                                        });
                                     }
                                 });
                             }
-                        } catch (e) {}
-                    }
-                } catch (e) {}
+                        } catch (errInner) {
+                            // Suppress individual repo contents fetch errors
+                        }
+                    }));
+                } catch (errSearch) {
+                    console.error(`GitHub API search failed for query "${q}":`, errSearch.message);
+                }
+                
+                // Add a small delay between GitHub search API calls to avoid rate limiting
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
 
             await addAutopilotLog(settings, `🔗 Discovered ${discoveredUrls.size} M3U playlists from web sources. Syncing channels...`);
@@ -833,7 +815,7 @@ async function runAutopilotTask() {
                             const url = line;
                             const exists = await Channel.findOne({ stream_url: url });
                             if (!exists) {
-                                if (isVODChannel({ name: currentChannel.name, category: currentChannel.category, stream_url: url })) {
+                                if (isVODChannel({ name: currentChannel.name, category: currentChannel.category, stream_url: url }, true)) {
                                     let finalCategory = `Scraped - ${currentChannel.category || 'General'}`;
                                     if (!finalCategory.toLowerCase().includes('pelicula')) {
                                         finalCategory = `Pelicula - ${currentChannel.category || 'Scraped'}`;
