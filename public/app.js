@@ -1,5 +1,41 @@
 const API_URL = window.location.origin + '/api';
 
+// Helper to precisely detect VOD (movies & series) channels, keeping Live TV untouched
+function isVODChannel(ch) {
+    if (!ch) return false;
+    const name = (ch.name || '').toLowerCase();
+    const cat = (ch.category || '').toLowerCase();
+    const url = (ch.stream_url || '').toLowerCase();
+
+    // 1. Static video file extensions are 100% VOD
+    if (url.endsWith('.mp4') || url.endsWith('.mkv') || url.endsWith('.avi') || url.endsWith('.mov') || url.endsWith('.webm')) {
+        return true;
+    }
+
+    // 2. Xtream Codes VOD URL paths (standard for IPTV movies/series)
+    if ((url.includes('/movie/') || url.includes('/movies/') || url.includes('/series/') || url.includes('/vod/')) && !url.includes('/live/')) {
+        return true;
+    }
+
+    // 3. Category prefixes specifically added by the scraper
+    if (cat.startsWith('scraped -') || cat.startsWith('pelicula -') || cat.startsWith('auto-scraped')) {
+        return true;
+    }
+
+    // 4. Keywords for movies but EXCLUDING keywords indicating live television channels
+    const vodKeywords = ['vod', 'pelicula', 'película', 'filme', 'film', 'estreno', 'estrenos', 'cinema hd', 'cine-hd', 'cine hd'];
+    const liveKeywords = ['live', 'tv', 'television', 'televisión', 'canal', 'canales', 'en vivo', 'señal', 'tdt', 'deportes', 'sports', 'noticias', 'news', 'hbo', 'star channel', 'warner', 'axn', 'tnt', 'fox', 'cinecanal', 'cine latino', 'cine de hoy', 'cinema live', 'cine live'];
+
+    const matchesVOD = vodKeywords.some(kw => cat.includes(kw) || name.includes(kw));
+    const matchesLive = liveKeywords.some(kw => cat.includes(kw) || name.includes(kw));
+
+    if (matchesVOD && !matchesLive) {
+        return true;
+    }
+
+    return false;
+}
+
 let globalChannels = [];
 let liveChannels = [];
 let movieChannels = [];
@@ -51,20 +87,9 @@ async function loadChannels() {
         const res = await fetch(`${API_URL}/channels`);
         globalChannels = await res.json();
         
-        // Split into Live TV and Movies based on category keywords safely
-        const movieRegex = /movie|cine|pelicula|vod|serie|film|drama|comedia|acción/i;
-        
-        liveChannels = globalChannels.filter(c => {
-            const category = c.category || 'General';
-            const streamUrl = c.stream_url || '';
-            return !movieRegex.test(category) && !streamUrl.endsWith('.mp4');
-        });
-        
-        movieChannels = globalChannels.filter(c => {
-            const category = c.category || 'General';
-            const streamUrl = c.stream_url || '';
-            return movieRegex.test(category) || streamUrl.endsWith('.mp4');
-        });
+        // Split into Live TV and Movies based on precision isVODChannel filter
+        liveChannels = globalChannels.filter(c => !isVODChannel(c));
+        movieChannels = globalChannels.filter(c => isVODChannel(c));
         
         // Populate Live TV filters
         const categoryFilter = document.getElementById('category-filter');
