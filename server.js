@@ -590,6 +590,42 @@ app.post('/api/autopilot/run', async (req, res) => {
 // Autopilot background worker implementation
 let isAutopilotRunning = false;
 
+// Helper to precisely detect VOD (movies & series) channels, keeping Live TV untouched
+function isVODChannel(ch) {
+    if (!ch) return false;
+    const name = (ch.name || '').toLowerCase();
+    const cat = (ch.category || '').toLowerCase();
+    const url = (ch.stream_url || '').toLowerCase();
+
+    // 1. Static video file extensions are 100% VOD
+    if (url.endsWith('.mp4') || url.endsWith('.mkv') || url.endsWith('.avi') || url.endsWith('.mov') || url.endsWith('.webm')) {
+        return true;
+    }
+
+    // 2. Xtream Codes VOD URL paths (standard for IPTV movies/series)
+    if ((url.includes('/movie/') || url.includes('/movies/') || url.includes('/series/') || url.includes('/vod/')) && !url.includes('/live/')) {
+        return true;
+    }
+
+    // 3. Category prefixes specifically added by the scraper
+    if (cat.startsWith('scraped -') || cat.startsWith('pelicula -') || cat.startsWith('auto-scraped')) {
+        return true;
+    }
+
+    // 4. Keywords for movies but EXCLUDING keywords indicating live television channels
+    const vodKeywords = ['vod', 'pelicula', 'película', 'filme', 'film', 'estreno', 'estrenos', 'cinema hd', 'cine-hd', 'cine hd'];
+    const liveKeywords = ['live', 'tv', 'television', 'televisión', 'canal', 'canales', 'en vivo', 'señal', 'tdt', 'deportes', 'sports', 'noticias', 'news', 'hbo', 'star channel', 'warner', 'axn', 'tnt', 'fox', 'cinecanal', 'cine latino', 'cine de hoy', 'cinema live', 'cine live'];
+
+    const matchesVOD = vodKeywords.some(kw => cat.includes(kw) || name.includes(kw));
+    const matchesLive = liveKeywords.some(kw => cat.includes(kw) || name.includes(kw));
+
+    if (matchesVOD && !matchesLive) {
+        return true;
+    }
+
+    return false;
+}
+
 async function addAutopilotLog(settings, message) {
     const timestamp = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const logLine = `[${timestamp}] ${message}`;
@@ -614,14 +650,7 @@ async function runAutopilotTask() {
 
         // 1. Validate stream health of existing MOVIE (VOD) channels only! Leave Live TV untouched!
         const channels = await Channel.find({});
-        const movieRegex = /movie|cine|pelicula|vod|serie|film|drama|comedia|acción/i;
-        
-        const movieChannels = channels.filter(ch => {
-            const cat = ch.category || 'General';
-            const url = ch.stream_url || '';
-            const name = ch.name || '';
-            return movieRegex.test(cat) || movieRegex.test(name) || url.endsWith('.mp4') || url.endsWith('.mkv');
-        });
+        const movieChannels = channels.filter(isVODChannel);
 
         await addAutopilotLog(settings, `🔍 Health Check: Scanning ${movieChannels.length} movie (VOD) channels in database (Live TV skipped)...`);
 
@@ -688,7 +717,9 @@ async function runAutopilotTask() {
 
             // 1. Single combined DuckDuckGo query (rate-limit immune)
             try {
-                const combined = settings.keywords.map(k => encodeURIComponent(k.trim())).join('+OR+');
+                // Include user keywords but always append movie/VOD terms since Autopilot only imports movies/VOD
+                const searchKeywords = [...new Set([...settings.keywords, 'peliculas', 'vod', 'movies', 'estrenos'])];
+                const combined = searchKeywords.map(k => encodeURIComponent(k.trim())).join('+OR+');
                 const searchUrl = `https://html.duckduckgo.com/html/?q=site:pastebin.com+OR+site:gist.github.com+OR+site:github.com+iptv+m3u+(${combined})`;
                 
                 const response = await axios.get(searchUrl, {
@@ -735,7 +766,8 @@ async function runAutopilotTask() {
             }
 
             // 2. Select up to 2 random keywords to query GitHub API (to avoid rate limits)
-            const githubKeywords = settings.keywords.sort(() => 0.5 - Math.random()).slice(0, 2);
+            const movieSearchKeywords = [...new Set([...settings.keywords, 'peliculas', 'vod', 'movies'])];
+            const githubKeywords = movieSearchKeywords.sort(() => 0.5 - Math.random()).slice(0, 2);
             for (const keyword of githubKeywords) {
                 try {
                     const searchUrl = `https://api.github.com/search/repositories?q=iptv+m3u+${encodeURIComponent(keyword.trim())}&sort=stars&order=desc`;
@@ -776,7 +808,7 @@ async function runAutopilotTask() {
             await addAutopilotLog(settings, `🔗 Discovered ${discoveredUrls.size} M3U playlists from web sources. Syncing channels...`);
 
             let crawledChannelsCount = 0;
-            const plistUrls = Array.from(discoveredUrls.keys()).slice(0, 3); // Read up to 3 playlists
+            const plistUrls = Array.from(discoveredUrls.keys()).slice(0, 10); // Read up to 10 playlists for a thorough search
             
             for (const plistUrl of plistUrls) {
                 try {
@@ -801,10 +833,7 @@ async function runAutopilotTask() {
                             const url = line;
                             const exists = await Channel.findOne({ stream_url: url });
                             if (!exists) {
-                                const movieRegex = /movie|cine|pelicula|vod|serie|film|drama|comedia|acción/i;
-                                let isMovie = movieRegex.test(currentChannel.name) || movieRegex.test(currentChannel.category) || url.endsWith('.mp4') || url.endsWith('.mkv');
-                                
-                                if (isMovie) {
+                                if (isVODChannel({ name: currentChannel.name, category: currentChannel.category, stream_url: url })) {
                                     let finalCategory = `Scraped - ${currentChannel.category || 'General'}`;
                                     if (!finalCategory.toLowerCase().includes('pelicula')) {
                                         finalCategory = `Pelicula - ${currentChannel.category || 'Scraped'}`;
@@ -825,7 +854,7 @@ async function runAutopilotTask() {
                     }
 
                     if (channelsToInsert.length > 0) {
-                        const insertLimit = channelsToInsert.slice(0, 50); // Insert up to 50 channels per list to avoid database pollution
+                        const insertLimit = channelsToInsert.slice(0, 1500); // Insert up to 1500 VOD channels per list for a thorough import
                         await Channel.insertMany(insertLimit, { ordered: false }).catch(e => {});
                         crawledChannelsCount += insertLimit.length;
                     }
