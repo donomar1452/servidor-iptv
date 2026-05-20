@@ -133,7 +133,16 @@
                         <button class="btn btn-primary" onclick="importM3U()">Import Channels</button>
                         <button class="btn btn-danger" onclick="clearAllChannels()">🗑️ Clear Database (0 channels)</button>
                     </div>
-                    <p id="import-status" class="status-msg"></p>
+                    
+                    <div style="margin-top: 24px; border-top: 1px solid var(--glass-border); padding-top: 20px;">
+                        <div class="form-group">
+                            <label>Or Upload M3U File (.m3u / .m3u8)</label>
+                            <input type="file" id="m3u_file" accept=".m3u,.m3u8" style="background: rgba(255, 255, 255, 0.05); width: 100%; padding: 12px; border: 1px solid var(--glass-border); border-radius: 8px; color: white; outline: none; cursor: pointer;">
+                        </div>
+                        <button class="btn btn-primary" onclick="uploadM3UFile()" style="margin-top: 8px; background: linear-gradient(135deg, #10b981, #059669); border: none;">📤 Upload & Import File</button>
+                    </div>
+
+                    <p id="import-status" class="status-msg" style="margin-top: 16px;"></p>
                 </div>
             </section>
 
