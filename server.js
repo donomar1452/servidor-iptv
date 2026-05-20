@@ -9,7 +9,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // --- API ROUTES FOR PANEL ---
@@ -150,12 +151,11 @@ app.get('/api/scraper/deep-search', async (req, res) => {
 
     const discoveredUrls = new Map(); // Use Map to prevent duplicates
 
-    // 1. DuckDuckGo Pastebin & Gist Raw Scraper (Rate-Limit Free)
-    const crawlDuckDuckGo = async () => {
+    // 1. Scraping Yahoo Search to find Pastebin, Gist, and GitHub links (rate-limit free and captcha-free)
+    const crawlYahoo = async () => {
         try {
-            // Search query looking for raw lists on GitHub, Gists, and Pastebin
-            const searchUrl = `https://html.duckduckgo.com/html/?q=site:pastebin.com+OR+site:gist.github.com+OR+site:github.com+iptv+m3u+${encodeURIComponent(query)}`;
-            const response = await axios.get(searchUrl, {
+            const yahooUrl = `https://search.yahoo.com/search?p=site:github.com+OR+site:pastebin.com+OR+site:gist.github.com+iptv+m3u+${encodeURIComponent(query)}`;
+            const response = await axios.get(yahooUrl, {
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                     'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8'
@@ -164,57 +164,110 @@ app.get('/api/scraper/deep-search', async (req, res) => {
             });
 
             const html = response.data;
-            const regex = /uddg=([^"&'\s>]+)/gi;
+            const regex = /href="[^"]*r\.search\.yahoo\.com[^"]*RU=([^"&'\s]+)/gi;
             let match;
+            const targetLinks = [];
 
             while ((match = regex.exec(html)) !== null) {
                 try {
-                    let rawUrl = decodeURIComponent(match[1]);
-                    if (rawUrl.includes('//duckduckgo.com') || !rawUrl.startsWith('http')) continue;
+                    let decodedUrl = decodeURIComponent(match[1]);
+                    decodedUrl = decodedUrl.replace(/\/RK=2\/RS=.+$/, '');
+                    decodedUrl = decodedUrl.replace(/\/$/, '');
 
-                    let source = 'Web Link';
-                    let isTarget = false;
+                    const urlObj = new URL(decodedUrl);
+                    const hostname = urlObj.hostname;
 
-                    // Standardize URLs to target the raw text files directly
-                    if (rawUrl.includes('pastebin.com')) {
-                        source = 'Pastebin';
-                        isTarget = true;
-                        if (!rawUrl.includes('/raw/')) {
-                            rawUrl = rawUrl.replace(/pastebin\.com\/([a-zA-Z0-9]+)$/, 'pastebin.com/raw/$1');
-                        }
-                    } else if (rawUrl.includes('gist.github.com')) {
-                        source = 'GitHub Gist';
-                        isTarget = true;
-                        if (!rawUrl.includes('/raw')) {
-                            rawUrl = rawUrl + '/raw';
-                        }
-                    } else if (rawUrl.includes('github.com')) {
-                        source = 'GitHub Repo';
-                        isTarget = true;
-                        if (rawUrl.includes('/blob/')) {
-                            rawUrl = rawUrl.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
-                        }
-                    }
-
-                    if (isTarget) {
-                        // Extract a user-friendly name from the URL path or query
-                        let name = `Lista Premium: ${query.toUpperCase()}`;
-                        const urlParts = rawUrl.split('/');
-                        const lastPart = urlParts[urlParts.length - 1] || 'm3u';
-                        name += ` (${lastPart.substring(0, 10)})`;
-
-                        discoveredUrls.set(rawUrl, { name, url: rawUrl, source });
+                    // Ensure it is a real target and not a Yahoo self-reference containing github in a query parameter
+                    if (hostname.includes('github.com') || hostname.includes('pastebin.com') || hostname.includes('raw.githubusercontent.com')) {
+                        targetLinks.push({ url: decodedUrl, hostname });
                     }
                 } catch (e) {
-                    // Ignore parsing errors for single links
+                    // Ignore single link issues
+                }
+            }
+
+            // Process discovered target URLs and resolve standard URLs to raw file URLs
+            for (const item of targetLinks) {
+                const { url, hostname } = item;
+                
+                if (hostname.includes('pastebin.com')) {
+                    let rawUrl = url;
+                    if (!url.includes('/raw/')) {
+                        rawUrl = url.replace(/pastebin\.com\/([a-zA-Z0-9]+)$/, 'pastebin.com/raw/$1');
+                    }
+                    const parts = url.split('/');
+                    const id = parts[parts.length - 1] || 'list';
+                    discoveredUrls.set(rawUrl, {
+                        name: `Pastebin: ${id.substring(0, 10)}`,
+                        url: rawUrl,
+                        source: 'Pastebin'
+                    });
+                } 
+                else if (hostname.includes('gist.github.com')) {
+                    let rawUrl = url;
+                    if (!url.includes('/raw')) {
+                        rawUrl = url + '/raw';
+                    }
+                    const parts = url.split('/');
+                    const id = parts[parts.length - 1] || 'gist';
+                    discoveredUrls.set(rawUrl, {
+                        name: `GitHub Gist (${id.substring(0, 10)})`,
+                        url: rawUrl,
+                        source: 'GitHub Gist'
+                    });
+                } 
+                else if (hostname.includes('github.com')) {
+                    if (url.includes('/blob/')) {
+                        // Direct file link conversion
+                        const rawUrl = url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
+                        const parts = url.split('/');
+                        const filename = parts[parts.length - 1] || 'playlist.m3u';
+                        discoveredUrls.set(rawUrl, {
+                            name: `GitHub File: ${filename}`,
+                            url: rawUrl,
+                            source: 'GitHub File'
+                        });
+                    } else if (!url.includes('/tree/') && !url.includes('/releases/') && !url.includes('/pulse') && !url.includes('/issues') && !url.includes('/pulls')) {
+                        // GitHub Repository page scraping
+                        try {
+                            const repoRes = await axios.get(url, {
+                                headers: {
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                                },
+                                timeout: 4000
+                            });
+                            
+                            const repoHtml = repoRes.data;
+                            // Regex to find .m3u/m3u8 blob files inside Github HTML
+                            const m3uRegex = /\/([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+\/blob\/[a-zA-Z0-9_./-]+\.m3u8?)/gi;
+                            let m3uMatch;
+                            
+                            while ((m3uMatch = m3uRegex.exec(repoHtml)) !== null) {
+                                const relativePath = m3uMatch[1];
+                                const fullUrl = `https://github.com/${relativePath}`;
+                                const rawUrl = fullUrl.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
+                                const parts = relativePath.split('/');
+                                const filename = parts[parts.length - 1];
+                                const repoName = `${parts[0]}/${parts[1]}`;
+                                
+                                discoveredUrls.set(rawUrl, {
+                                    name: `${repoName} - ${filename}`,
+                                    url: rawUrl,
+                                    source: 'GitHub Repo'
+                                });
+                            }
+                        } catch (err) {
+                            // Suppress individual repo scraping errors
+                        }
+                    }
                 }
             }
         } catch (err) {
-            console.error("DuckDuckGo crawler error:", err.message);
+            console.error("Yahoo deep-search scraping error:", err.message);
         }
     };
 
-    // 2. GitHub API Scraper (Fallback, handles potential 403 rate limits gracefully)
+    // 2. Fallback unauthenticated GitHub API search (only search repos, but skip contents scanning to protect rate limits)
     const crawlGitHubApi = async () => {
         try {
             const searchUrl = `https://api.github.com/search/repositories?q=iptv+m3u+${encodeURIComponent(query)}&sort=stars&order=desc`;
@@ -223,52 +276,40 @@ app.get('/api/scraper/deep-search', async (req, res) => {
                     'User-Agent': 'IPTV-Server-Admin-Scraper (Mozilla/5.0)',
                     'Accept': 'application/vnd.github.v3+json'
                 },
-                timeout: 6000
+                timeout: 5000
             });
             
             const repos = response.data.items || [];
-            const promises = repos.slice(0, 5).map(async (repo) => {
-                try {
-                    // Root contents scan
-                    const contentsUrl = `https://api.github.com/repos/${repo.full_name}/contents`;
-                    const contentsRes = await axios.get(contentsUrl, {
-                        headers: { 
-                            'User-Agent': 'IPTV-Server-Admin-Scraper (Mozilla/5.0)',
-                            'Accept': 'application/vnd.github.v3+json'
-                        },
-                        timeout: 3000
-                    });
+            repos.slice(0, 3).forEach(repo => {
+                // We guess common raw file targets for this repository!
+                const commonPaths = ['playlist.m3u', 'playlist.m3u8', 'iptv.m3u', 'iptv.m3u8', 'channels.m3u'];
+                commonPaths.forEach(path => {
+                    const rawUrlMain = `https://raw.githubusercontent.com/${repo.full_name}/main/${path}`;
+                    const rawUrlMaster = `https://raw.githubusercontent.com/${repo.full_name}/master/${path}`;
                     
-                    const files = contentsRes.data || [];
-                    if (Array.isArray(files)) {
-                        files.forEach(file => {
-                            const nameLower = file.name.toLowerCase();
-                            const isM3u = nameLower.endsWith('.m3u') || nameLower.endsWith('.m3u8');
-                            if (file.type === 'file' && isM3u) {
-                                discoveredUrls.set(file.download_url, {
-                                    name: `${repo.full_name} / ${file.name}`,
-                                    url: file.download_url,
-                                    source: 'GitHub API'
-                                });
-                            }
-                        });
-                    }
-                } catch (e) {
-                    // Ignore single repo details errors
-                }
+                    discoveredUrls.set(rawUrlMain, {
+                        name: `${repo.full_name} / ${path} (main)`,
+                        url: rawUrlMain,
+                        source: 'GitHub API (Guess)'
+                    });
+                    discoveredUrls.set(rawUrlMaster, {
+                        name: `${repo.full_name} / ${path} (master)`,
+                        url: rawUrlMaster,
+                        source: 'GitHub API (Guess)'
+                    });
+                });
             });
-            await Promise.all(promises);
         } catch (err) {
-            console.warn("GitHub API rate limited or unreachable. Using DDG results.");
+            // Ignore API rate limiting issues gracefully
         }
     };
 
-    // Run both crawlers in parallel for maximum speed and reliability
-    await Promise.allSettled([crawlDuckDuckGo(), crawlGitHubApi()]);
+    // Run both crawlers in parallel
+    await Promise.allSettled([crawlYahoo(), crawlGitHubApi()]);
 
     const results = Array.from(discoveredUrls.values());
 
-    // 3. Fallback to Curated premium lists if no results were found (guarantees success)
+    // 3. Fallback to Curated premium lists if no results were found
     if (results.length === 0) {
         const fallbacks = [
             {
@@ -298,14 +339,12 @@ app.get('/api/scraper/deep-search', async (req, res) => {
             }
         ];
         
-        // Filter backup lists matching query keyword
         const queryLower = query.toLowerCase();
         const filteredFallbacks = fallbacks.filter(f => 
             f.name.toLowerCase().includes(queryLower) || 
             f.url.toLowerCase().includes(queryLower)
         );
 
-        // If specific keyword not found, return the full backup list so the user isn't left empty-handed
         res.json(filteredFallbacks.length > 0 ? filteredFallbacks : fallbacks);
     } else {
         res.json(results);
@@ -465,6 +504,84 @@ app.post('/api/m3u/import-text', async (req, res) => {
     } catch (err) {
         console.error("M3U Text Import Error:", err.message);
         res.status(500).json({ error: 'Failed to parse M3U text', details: err.message });
+    }
+});
+
+// Extract VOD channels from any M3U URL (utility download endpoint)
+app.get('/api/m3u/extract-vod', async (req, res) => {
+    const { url, keyword } = req.query;
+    if (!url) return res.status(400).send("URL is required");
+
+    try {
+        console.log(`Extracting VOD from: ${url}`);
+        const response = await axios.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            },
+            timeout: 120000,
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity
+        });
+
+        const lines = response.data.split(/\r?\n/);
+        let currentChannel = {};
+        let vodChannels = [];
+        const kwLower = keyword ? keyword.toLowerCase().trim() : null;
+
+        for (let line of lines) {
+            line = line.trim();
+            if (line.startsWith('#EXTINF:')) {
+                const logoMatch = line.match(/tvg-logo="([^"]+)"/);
+                const groupMatch = line.match(/group-title="([^"]+)"/);
+                const nameMatch = line.split(',').pop();
+                
+                let cat = groupMatch ? groupMatch[1] : 'General';
+                
+                currentChannel = {
+                    name: nameMatch ? nameMatch.trim() : 'Unknown',
+                    logo: logoMatch ? logoMatch[1] : '',
+                    category: cat
+                };
+            } else if (line.startsWith('http')) {
+                const streamUrl = line;
+                const ch = {
+                    name: currentChannel.name || 'Unknown',
+                    stream_url: streamUrl,
+                    logo: currentChannel.logo || '',
+                    category: currentChannel.category || 'General'
+                };
+
+                // Check if it is a VOD channel
+                if (isVODChannel(ch, true)) {
+                    // Apply keyword filter if provided (e.g. 'estrenos')
+                    if (kwLower) {
+                        const nameLower = ch.name.toLowerCase();
+                        const catLower = ch.category.toLowerCase();
+                        if (nameLower.includes(kwLower) || catLower.includes(kwLower)) {
+                            vodChannels.push(ch);
+                        }
+                    } else {
+                        vodChannels.push(ch);
+                    }
+                }
+                currentChannel = {};
+            }
+        }
+
+        // Generate M3U output
+        res.setHeader('Content-Type', 'audio/x-mpegurl');
+        res.setHeader('Content-Disposition', `attachment; filename="vod_extracted${keyword ? '_' + keyword : ''}.m3u"`);
+        
+        res.write("#EXTM3U\n");
+        vodChannels.forEach(ch => {
+            res.write(`#EXTINF:-1 tvg-logo="${ch.logo}" group-title="${ch.category}",${ch.name}\n`);
+            res.write(`${ch.stream_url}\n`);
+        });
+        res.end();
+
+    } catch (err) {
+        console.error("VOD extraction error:", err.message);
+        res.status(500).send("Error extracting VOD: " + err.message);
     }
 });
 
