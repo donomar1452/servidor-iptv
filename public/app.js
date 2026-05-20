@@ -233,7 +233,10 @@ async function importM3U() {
         const res = await fetch(`${API_URL}/m3u/import`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ m3u_url })
+            body: JSON.stringify({ 
+                m3u_url, 
+                keep_existing: document.getElementById('keep_existing').checked 
+            })
         });
         const data = await res.json();
         
@@ -269,7 +272,10 @@ async function uploadM3UFile() {
         const res = await fetch(`${API_URL}/m3u/import-text`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ m3u_text: fileText })
+            body: JSON.stringify({ 
+                m3u_text: fileText, 
+                keep_existing: document.getElementById('keep_existing').checked 
+            })
         });
         const data = await res.json();
         
@@ -697,3 +703,17 @@ async function triggerAutopilotManual() {
 
 // Init
 window.onload = loadUsers;
+
+function downloadExtractedVOD() {
+    const url = document.getElementById('extractor_url').value.trim();
+    const keyword = document.getElementById('extractor_keyword').value.trim();
+    if (!url) return alert("Por favor, introduce la URL de tu lista M3U primero.");
+
+    let downloadUrl = `${API_URL}/m3u/extract-vod?url=${encodeURIComponent(url)}`;
+    if (keyword) {
+        downloadUrl += `&keyword=${encodeURIComponent(keyword)}`;
+    }
+
+    alert("⏳ Extrayendo lista de películas VOD... Tu descarga comenzará en unos segundos.");
+    window.location.href = downloadUrl;
+}

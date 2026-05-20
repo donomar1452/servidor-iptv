@@ -125,6 +125,15 @@
                     <h1>Import M3U Playlist</h1>
                 </header>
                 <div class="form-container">
+                    <!-- Toggle to keep or delete previous channels -->
+                    <div class="form-group" style="display: flex; align-items: center; gap: 10px; background: rgba(255, 255, 255, 0.03); padding: 14px; border-radius: 8px; border: 1px solid var(--glass-border); margin-bottom: 20px;">
+                        <input type="checkbox" id="keep_existing" style="width: 20px; height: 20px; cursor: pointer; accent-color: var(--primary);">
+                        <div style="cursor: pointer;">
+                            <label for="keep_existing" style="margin-bottom: 2px; font-weight: 600; cursor: pointer;">Acumular canales en la base de datos</label>
+                            <span style="font-size: 0.8rem; color: var(--text-muted); display: block;">Si se marca, los nuevos canales se sumarán a los ya existentes. Si se desmarca, se borrarán los anteriores.</span>
+                        </div>
+                    </div>
+
                     <div class="form-group">
                         <label>M3U URL</label>
                         <input type="text" id="m3u_url" placeholder="http://example.com/list.m3u">
@@ -140,6 +149,21 @@
                             <input type="file" id="m3u_file" accept=".m3u,.m3u8" style="background: rgba(255, 255, 255, 0.05); width: 100%; padding: 12px; border: 1px solid var(--glass-border); border-radius: 8px; color: white; outline: none; cursor: pointer;">
                         </div>
                         <button class="btn btn-primary" onclick="uploadM3UFile()" style="margin-top: 8px; background: linear-gradient(135deg, #10b981, #059669); border: none;">📤 Upload & Import File</button>
+                    </div>
+
+                    <div style="margin-top: 28px; border-top: 2px dashed var(--glass-border); padding-top: 24px;">
+                        <h3 style="color: var(--primary); margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">🎬 VOD & Estrenos Extractor Tool</h3>
+                        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 16px; line-height: 1.4;">Descarga y extrae únicamente las películas, series y estrenos VOD de cualquier lista gigante M3U, generando un archivo limpio de películas listo para usar de forma instantánea.</p>
+                        
+                        <div class="form-group">
+                            <label>M3U Playlist URL</label>
+                            <input type="text" id="extractor_url" placeholder="Pega el enlace de la lista gigante M3U...">
+                        </div>
+                        <div class="form-group">
+                            <label>Filtrar por palabra clave (Opcional - ej: 'estrenos' o déjalo en blanco para descargar todo el VOD)</label>
+                            <input type="text" id="extractor_keyword" placeholder="ej: estrenos">
+                        </div>
+                        <button class="btn btn-primary" onclick="downloadExtractedVOD()" style="margin-top: 8px; background: linear-gradient(135deg, #8b5cf6, #6d28d9); border: none; font-weight: bold; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px;">⚡ Extraer y Descargar Lista VOD</button>
                     </div>
 
                     <p id="import-status" class="status-msg" style="margin-top: 16px;"></p>
