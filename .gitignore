@@ -1,0 +1,42 @@
+# Dependency directories
+node_modules/
+jspm_packages/
+web_modules/
+
+# Local configuration and credentials (CRITICAL)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Databases (SQLite, log files, etc.)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Playlists containing active subscription credentials (CRITICAL)
+*.m3u
+*.m3u8
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.log
+
+# Editor directories and metadata
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Temporary / scrap files
+yahoo_response2.html
+extract_2026_vod.js
+test_deep_search.js

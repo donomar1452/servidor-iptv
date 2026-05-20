@@ -364,13 +364,17 @@ app.post('/api/channels', async (req, res) => {
 
 // Parse M3U endpoint
 app.post('/api/m3u/import', async (req, res) => {
-    const { m3u_url } = req.body;
+    const { m3u_url, keep_existing } = req.body;
     if (!m3u_url) return res.status(400).json({error: "M3U URL is required"});
     
     try {
-        // Clear previous channels before importing a new list to prevent duplicates and server OOM crashes
-        console.log("Clearing previous channels from database...");
-        await Channel.deleteMany({});
+        // Clear previous channels if keep_existing is not true to prevent duplicates and server OOM crashes
+        if (!keep_existing) {
+            console.log("Clearing previous channels from database...");
+            await Channel.deleteMany({});
+        } else {
+            console.log("Keeping previous channels in database (appending)...");
+        }
         
         console.log(`Starting download for M3U: ${m3u_url}`);
         const response = await axios.get(m3u_url, {
@@ -443,12 +447,17 @@ app.post('/api/m3u/import', async (req, res) => {
 
 // Parse M3U text endpoint (for local file upload)
 app.post('/api/m3u/import-text', async (req, res) => {
-    const { m3u_text } = req.body;
+    const { m3u_text, keep_existing } = req.body;
     if (!m3u_text) return res.status(400).json({error: "M3U text is required"});
     
     try {
-        console.log("Clearing previous channels from database...");
-        await Channel.deleteMany({});
+        // Clear previous channels if keep_existing is not true to prevent duplicates and server OOM crashes
+        if (!keep_existing) {
+            console.log("Clearing previous channels from database...");
+            await Channel.deleteMany({});
+        } else {
+            console.log("Keeping previous channels in database (appending)...");
+        }
         
         console.log(`Parsing uploaded M3U text...`);
         const lines = m3u_text.split(/\r?\n/);
